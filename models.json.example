@@ -1,0 +1,49 @@
+{
+  // models.json — 自定义模型端点（pi 加载时 strip 注释，可放心写注释）。
+  // 官方 schema（TypeBox）：pi 源码 packages/coding-agent/src/core/model-config.ts → ModelsConfigSchema
+  // 配置文档：https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/custom-provider.md
+  //
+  // 下面以 OpenRouter 上的 GLM-5.2、Hugging Face 上的 Kimi K3 为例。
+  // 模型 id / 上下文窗口以各平台模型页为准（下列值取自我们生产网关的实测配置）。
+  // 配套：settings.json 的 defaultProvider/defaultModel 与 subagents 模型串要同步改，
+  // apiKey 用 $VAR 引用，变量值放 .env（见 .env.example）。
+  "providers": {
+    "openrouter": {
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "api": "openai-completions",
+      "apiKey": "$OPENROUTER_API_KEY",
+      "models": [
+        {
+          "id": "z-ai/glm-5.2",
+          "name": "GLM 5.2 (OpenRouter)",
+          "reasoning": true,
+          // GLM-5.2 思考档位：xhigh 映射到 max（z.ai 原生最高档）；
+          // OpenRouter 若不接受 max，会按其归一化规则落到 high
+          "thinkingLevelMap": { "minimal": null, "low": "low", "medium": "medium", "high": "high", "xhigh": "max" },
+          "input": ["text"],
+          "contextWindow": 1000000,
+          "maxTokens": 131072,
+          "compat": { "supportsReasoningEffort": true, "thinkingFormat": "zai" }
+        }
+      ]
+    },
+    "huggingface": {
+      "baseUrl": "https://router.huggingface.co/v1",
+      "api": "openai-completions",
+      "apiKey": "$HF_TOKEN",
+      "models": [
+        {
+          "id": "moonshotai/Kimi-K3-Instruct",
+          "name": "Kimi K3 (Hugging Face)",
+          "reasoning": true,
+          // Kimi K3 思考档位：支持 low / high / max，无 medium、xhigh（映射为 null 表示不设置）
+          "thinkingLevelMap": { "minimal": null, "low": "low", "medium": null, "high": "high", "xhigh": "max" },
+          "input": ["text", "image"],
+          "contextWindow": 1048576,
+          "maxTokens": 131072,
+          "compat": { "supportsReasoningEffort": true }
+        }
+      ]
+    }
+  }
+}

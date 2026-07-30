@@ -1,0 +1,20 @@
+# 运行时产物（agent dir 会被 pi 写入）
+sessions/
+auth.json
+models-store.json
+*.log
+
+# 本地私有配置（含内网端点）
+.env
+
+# 本地杂项
+.pi-agent-template/
+bin/
+run-history.jsonl
+models.json
+settings.json
+node_modules/
+.pi-subagents/
+.vulnforge/
+__pycache__/
+*.pyc
