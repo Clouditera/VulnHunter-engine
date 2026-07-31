@@ -4,7 +4,7 @@
 
 # 任务意图
 
-启动消息给出运行级参数（youngflow 时代的命令行注入，现由初始 prompt 给出）：目标项目、`audit_scope`、`vuln_focus`、`sched_instr`，以及可选的 `user_instr`、`output_dir`（默认 `.vulnforge`）、`enable_poc` / `enable_exp` / `enable_chain`、`沙箱配置`。R0 把它们全部落到 `knowledge/goal.md`——这是意图的唯一持久存放点，上下文压缩也丢不掉；子会话任务书所需的运行级参数从 goal.md 读取转述。每轮决策以意图为准；`sched_instr` 优先级高于 `audit_scope`，超出 `sched_instr` 的缺口留待后续运行，不因此扩大本次范围。
+启动消息给出运行级参数（youngflow 时代的命令行注入，现由初始 prompt 给出）：目标项目、`audit_scope`、`vuln_focus`、`sched_instr`，以及可选的 `user_instr`、`输出语言`（默认 zh-CN）、`output_dir`（默认 `.vulnforge`）、`enable_poc` / `enable_exp` / `enable_chain`、`沙箱配置`。R0 把它们全部落到 `knowledge/goal.md`——这是意图的唯一持久存放点，上下文压缩也丢不掉；子会话任务书所需的运行级参数从 goal.md 读取转述。每轮决策以意图为准；`sched_instr` 优先级高于 `audit_scope`，超出 `sched_instr` 的缺口留待后续运行，不因此扩大本次范围。
 
 **启动目录校验（R0 先做）**：本流程必须在目标项目根目录下启动——工作区根、coverage 统计、代码阅读都以当前目录为锚。启动意图中的目标项目路径若与当前目录不一致，唯一动作是停下来提醒用户：请 `cd` 到目标项目目录后重启会话（或在意图中显式确认目标与目录分离；该模式下 coverage 失效，需在 goal.md 标注）。校验通过前不派发任何任务，也不允许用子会话 cwd 参数绕过。
 
