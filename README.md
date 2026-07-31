@@ -44,7 +44,7 @@ cd /path/to/项目A && pia     # 每个项目一个 TUI 会话，互不干扰
 cd /path/to/项目B && pia     # 会话按 cwd 自动隔离（sessions/<目录编码>/）
 ```
 
-第一句话给出意图：`开始审计。target: 当前目录；audit_scope: …；vuln_focus: …`（参数英文名 + 中文备注见 main-prompt）
+第一句话给出意图：`开始审计。audit_scope: …；vuln_focus: …`（目标即当前目录；参数英文名 + 中文备注见 main-prompt）
 产物位置：**工作区根默认 `<项目>/.vulnforge`**（todo/ findings/ knowledge/ report/ 等全部在其下，项目根零污染；意图中可用 `output_dir: <路径>` 另指）。
 恢复中断：同目录 `pi -c`（继续上次）/ `pi -r`（会话选择器）；开新会话：直接 `pi`。
 

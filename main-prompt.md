@@ -4,9 +4,9 @@
 
 # 任务意图
 
-启动消息给出运行级参数：`target`（目标项目）、`audit_scope`（审计范围）、`vuln_focus`（漏洞关注）、`sched_instr`（调度约束），以及可选的 `user_instr`（用户补充说明）、`output_lang`（输出语言，默认 zh-CN）、`output_dir`（输出目录，默认 `.vulnforge`）、`enable_poc` / `enable_exp` / `enable_chain`（启用 POC/EXP/组合链）、`sandbox_cfg`（沙箱配置）。R0 把它们全部落到 `knowledge/goal.md`——这是意图的唯一持久存放点，上下文压缩也丢不掉；子会话任务书所需的运行级参数从 goal.md 读取转述。每轮决策以意图为准；`sched_instr` 优先级高于 `audit_scope`，超出 `sched_instr` 的缺口留待后续运行，不因此扩大本次范围。
+启动消息给出运行级参数：`audit_scope`（审计范围）、`vuln_focus`（漏洞关注）、`sched_instr`（调度约束），以及可选的 `user_instr`（用户补充说明）、`output_lang`（输出语言，默认 zh-CN）、`output_dir`（输出目录，默认 `.vulnforge`）、`enable_poc` / `enable_exp` / `enable_chain`（启用 POC/EXP/组合链）、`sandbox_cfg`（沙箱配置）。R0 把它们全部落到 `knowledge/goal.md`——这是意图的唯一持久存放点，上下文压缩也丢不掉；子会话任务书所需的运行级参数从 goal.md 读取转述。每轮决策以意图为准；`sched_instr` 优先级高于 `audit_scope`，超出 `sched_instr` 的缺口留待后续运行，不因此扩大本次范围。
 
-**启动目录校验（R0 先做）**：本流程必须在目标项目根目录下启动——工作区根、coverage 统计、代码阅读都以当前目录为锚。启动意图中的目标项目路径若与当前目录不一致，唯一动作是停下来提醒用户：请 `cd` 到目标项目目录后重启会话（或在意图中显式确认目标与目录分离；该模式下 coverage 失效，需在 goal.md 标注）。校验通过前不派发任何任务，也不允许用子会话 cwd 参数绕过。
+**启动目录校验（R0 先做）**：本流程必须在目标项目根目录下启动——目标即当前目录，工作区根、coverage 统计、代码阅读都以它为锚。意图中若出现指向其它路径的目标表述，唯一动作是停下来提醒用户：请 `cd` 到目标项目目录后重启会话（或在意图中显式确认目标与目录分离；该模式下 coverage 失效，需在 goal.md 标注）。校验通过前不派发任何任务，也不允许用子会话 cwd 参数绕过。
 
 # 每轮循环
 
@@ -39,6 +39,6 @@
 
 # 上下文纪律（pi-context）
 
-- R0：建立根锚点 `root`（记录 target / audit_scope / vuln_focus / sched_instr）。
+- R0：建立根锚点 `root`（记录 audit_scope / vuln_focus / sched_instr）。
 - 每轮结束：打轮锚点 `round-<n>`（本轮方向、派发任务、结果一句话）。
 - 上下文占用高时：`context_timeline` 定位后，从根锚点或最近稳定锚点 `context_compact` 出新分支继续。**摘要只写事实**——派了什么、结果是什么、工作区关键状态、下一步；**不写**"我为什么这么想"的推理模式。
