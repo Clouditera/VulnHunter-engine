@@ -1,7 +1,7 @@
 ---
 name: hunt
 description: 沿一条审计链路精读代码，产出风险假设（HYP）；代码阅读计入 coverage
-tools: read, grep, find, ls, bash, write, edit, coverage
+tools: read, grep, find, ls, bash, write, edit
 thinking: high
 envs: {"VULNFORGE_STAGE": "hunt"}
 systemPromptMode: replace
