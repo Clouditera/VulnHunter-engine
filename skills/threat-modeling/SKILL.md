@@ -1,3 +1,8 @@
+---
+name: threat-modeling
+description: 威胁建模技能。为一个目标系统建立威胁模型——审计全程的判断基准
+---
+
 # threat-modeling
 
 威胁建模技能。为一个目标系统建立威胁模型——审计全程的判断基准。

@@ -1,3 +1,8 @@
+---
+name: hypothesis-writer
+description: 漏洞假设表达技能。用于把安全审计中的怀疑点整理成可论证的假设
+---
+
 # hypothesis-writer
 
 漏洞假设表达技能。用于把安全审计中的怀疑点整理成可论证的假设。
