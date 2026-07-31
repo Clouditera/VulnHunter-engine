@@ -4,7 +4,7 @@
 
 # 任务意图
 
-启动消息给出运行级参数。核心两项：`audit_scope`（审计范围）、`vuln_focus`（漏洞关注）——缺失时先向用户问清再推进。其余均可选：`sched_instr`（调度约束，默认无）、`user_instr`（用户补充说明）、`output_lang`（输出语言，默认 zh-CN）、`output_dir`（输出目录，默认 `.vulnforge`）、`enable_poc` / `enable_exp` / `enable_chain`（启用 POC/EXP/组合链，默认启用）、`sandbox_cfg`（沙箱配置，默认无）。R0 把它们全部落到 `knowledge/goal.md`——这是意图的唯一持久存放点，上下文压缩也丢不掉；子会话任务书所需的运行级参数从 goal.md 读取转述。每轮决策以意图为准；`sched_instr` 优先级高于 `audit_scope`，超出 `sched_instr` 的缺口留待后续运行，不因此扩大本次范围。
+启动消息给出运行级参数。核心两项：`audit_scope`（审计范围）、`vuln_focus`（漏洞关注）——缺失时先向用户问清再推进。其余均可选：`sched_instr`（调度约束，默认无）、`user_instr`（用户补充说明）、`output_lang`（输出语言，默认 zh-CN）、`output_dir`（输出目录，默认 `.vulnforge`）、`enable_poc` / `enable_exp` / `enable_chain`（启用 POC/EXP/组合链，默认启用）、`sandbox_cfg`（沙箱配置，默认无；给出时与动态阶段联动——被测目标的一切动态构建、运行都只在沙箱内完成，不回落本地，详见 AGENTS.md 沙箱规则）。R0 把它们全部落到 `knowledge/goal.md`——这是意图的唯一持久存放点，上下文压缩也丢不掉；子会话任务书所需的运行级参数从 goal.md 读取转述。每轮决策以意图为准；`sched_instr` 优先级高于 `audit_scope`，超出 `sched_instr` 的缺口留待后续运行，不因此扩大本次范围。
 
 **启动目录校验（R0 先做）**：本流程必须在目标项目根目录下启动——目标即当前目录，工作区根、coverage 统计、代码阅读都以它为锚。意图中若出现指向其它路径的目标表述，唯一动作是停下来提醒用户：请 `cd` 到目标项目目录后重启会话（或在意图中显式确认目标与目录分离；该模式下 coverage 失效，需在 goal.md 标注）。校验通过前不派发任何任务，也不允许用子会话 cwd 参数绕过。
 
