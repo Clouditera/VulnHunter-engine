@@ -6,8 +6,8 @@
  *   tool_result: 写入即做 schema 校验，结果回告模型
  *   turn_end:   模型停止调用工具时全量校验；失败则引导其继续（防退出）
  *
- * 阶段识别：VULNFORGE_STAGE（agents frontmatter envs 注入，精确）
- *           → todo/ 任务文件名推断（兜底）。
+ * 阶段识别：仅认 VULNFORGE_STAGE（agents frontmatter envs 注入，精确）；
+ *           主会话（decide）无此变量，不施加契约。
  * 工作区根：<cwd>/.vulnforge（存在即采用，否则 cwd）。
  */
 
@@ -44,56 +44,6 @@ interface PathCtx {
 // Entry
 // ---------------------------------------------------------------------------
 
-const TODO_PREFIX_STAGE: Record<string, string> = {
-  "onboard-": "onboard",
-  "RES-": "research",
-  "COG-": "cognize",
-  "ADV-": "hunt",
-  "HYP-": "verify",
-  "POC-": "poc-verify",
-  "EXP-": "ev-assess",
-  "CHAIN-": "exp-build",
-  "REPORT-": "report",
-};
-
-// 阶段关键词兜底（主会话命名有波动时：如 T04-verify-HYP001.md）。
-// 长的在前，避免 verify 命中 poc-verify 之类子串。
-const STAGE_KEYWORDS: Array<[string, string]> = [
-  ["poc-verify", "poc-verify"],
-  ["ev-assess", "ev-assess"],
-  ["exp-build", "exp-build"],
-  ["onboard", "onboard"],
-  ["cognize", "cognize"],
-  ["research", "research"],
-  ["verify", "verify"],
-  ["hunt", "hunt"],
-  ["report", "report"],
-  ["poc", "poc-verify"],
-  ["chain", "exp-build"],
-  ["exp", "ev-assess"],
-];
-
-function inferStageFromTodo(outputDir: string): string | undefined {
-  try {
-    const { readdirSync } = require("fs");
-    const files: string[] = readdirSync(resolve(outputDir, "todo")).sort();
-    // 严格前缀优先（ADV-/HYP-/POC- 等规范命名）
-    for (const f of files) {
-      for (const [prefix, stage] of Object.entries(TODO_PREFIX_STAGE)) {
-        if (f.startsWith(prefix)) return stage;
-      }
-    }
-    // 关键词兜底（文件名任一部分命中阶段名）
-    for (const f of files) {
-      const lower = f.toLowerCase();
-      for (const [kw, stage] of STAGE_KEYWORDS) {
-        if (lower.includes(kw)) return stage;
-      }
-    }
-  } catch {}
-  return undefined;
-}
-
 function resolveRoots(): { outputDir: string; flowDir: string } {
   // 工作区根 = <cwd>/.vulnforge（存在即采用，否则 cwd）；flowDir = 仓库根
   const cwd = process.cwd();
@@ -105,9 +55,10 @@ function resolveRoots(): { outputDir: string; flowDir: string } {
 export default function (pi: ExtensionAPI) {
   const { outputDir, flowDir } = resolveRoots();
 
-  // stage 识别：VULNFORGE_STAGE（agents frontmatter envs 注入，精确）
-  // → todo/ 任务前缀/关键词推断（兜底）。
-  const stageId = process.env.VULNFORGE_STAGE ?? inferStageFromTodo(outputDir);
+  // stage 识别：仅认 VULNFORGE_STAGE（agents frontmatter envs 注入，精确）。
+  // 主会话（decide）无此变量 → 不施加契约（它是编排者，todo/leads/done 都要写）；
+  // 曾用 todo/ 文件名推断做兜底，会把主会话误判成 report 等阶段，已移除。
+  const stageId = process.env.VULNFORGE_STAGE;
   if (!stageId) return;
 
   const contractsPath = resolve(__dirname, "contracts.json");
