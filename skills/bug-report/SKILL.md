@@ -105,7 +105,7 @@ CWE / OWASP / 相关文档参考链接。
 
 ## 严重程度与 CVSS
 
-漏洞的技术严重程度由 CVSS v3.1 基础分数度量，不用主观判断。报告只存 cvss_vector / cvss_score（危险分档由分数自然映射，不单独存 severity 字段）。
+漏洞的技术严重程度由 CVSS v3.1 基础分数度量，不用主观判断。报告只存 cvss_vector / cvss_score（危险分档由分数按 NVD 档位映射：9.0–10.0 critical / 7.0–8.9 high / 4.0–6.9 medium / 0.1–3.9 low / 0.0 none，不单独存 severity 字段）。
 
 ### 评估流程
 
