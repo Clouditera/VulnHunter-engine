@@ -17,13 +17,19 @@ extensions:
 
 # 目标
 
-按 `todo/POC-*.md` 任务指定的 finding 做动态复现，把静态确认的漏洞在真实运行中证实；对含存疑点的 finding，任务是实证成立性——对存疑点给出实验结论（证实/证伪均可，fail-reproduced 也是有证据的否定）。
+读取当前 `todo/POC-*.md` 的 `target`，找到对应 `findings/BUG-*/report.yaml`，在动态验证环境里复现它。用动态证据检验 finding 的关键声称——跑出异常不等于复现成功，必须确认异常来自 finding 声称的真实入口、真实路径和真实危害。
 
 # 产出
 
-- `findings/BUG-<id>/poc/`：复现脚本、触发输入、运行日志与复现说明（环境、命令、输出、结论）。
-- 更新 `findings/BUG-<id>/report.yaml` 的 `poc_status`：`reproduced`（已复现）/ `fail-reproduced`（已具备条件但复现失败，终态）/ `blocked`（环境或外部条件不足，写明原因）。
-- poc 环境关键信息和报告信息按需更新（`knowledge/build/build.md` 等）。
+poc 相关文件统一写入 `findings/<BUG-id>/poc/` 下：
+
+- `poc.md`：本 poc 相关的重要信息和结论。
+- 其它复现过程使用的脚本、触发输入、测试日志等文件。
+
+poc 环境关键信息和报告信息按需更新：
+
+- `findings/<BUG-id>/report.yaml`：根据复现结果更新 `poc_status`；必要时修正 finding_class、标题、影响描述和攻击前提等。
+- `knowledge/build/`：对动态测试环境的关键操作、脚本等。
 
 ## 完成处理
 
@@ -31,6 +37,6 @@ extensions:
 
 # 备注
 
-- 沙箱规则见 AGENTS.md；沙箱不可达时本任务标 blocked 退出。
 - 只对 `finding_class: vulnerability` 的 finding 复现；`risk` 类不做 POC。
-- 按 build.md 记录的环境配方复用环境，不重复构建。
+- 对含存疑点的 finding，须对存疑点给出实验结论。
+- 沙箱规则见 AGENTS.md；沙箱不可达时本任务标 blocked 退出。

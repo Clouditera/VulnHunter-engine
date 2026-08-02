@@ -17,13 +17,23 @@ extensions:
 
 # 目标
 
-对已 POC 复现的漏洞，在准业务环境中评估真实世界可达的最大影响；影响主张达不到时降级报告（downgrade 也是有效结论）。
+处理一个 EXP 任务，根据任务指定的 `target`，理解该 finding 相关的业务和威胁模型，搭建准业务环境，评估它在真实场景下的最大影响力。只对 `finding_class: vulnerability` 的 finding 执行，只做单个漏洞。
+
+当报告声称的影响力在真实环境下无法实现时，对数据和报告做降级处理。
 
 # 产出
 
-- `findings/BUG-<id>/exp/`：评估材料——business-model.md（业务场景与攻击者画像）、threat-model.md（针对性威胁模型）、exp.md（评估报告：环境、步骤、观察、结论）、验证脚本与日志。
-- 更新 `findings/BUG-<id>/report.yaml`：`exp_status`（`confirmed` 真实场景危害成立 / `downgraded` PoC 成立但真实影响需降级 / `failed` 真实场景不成立 / `blocked` 条件无法模拟）、ev_vector/ev_score/ev_priority 与影响结论。
-- exp 环境关键信息和报告信息按需更新。
+exp 相关文件统一写入 `findings/<target-BUG>/exp/` 下：
+
+- `business-model.md`：漏洞相关功能的业务模型。
+- `threat-model.md`：围绕当前 finding 的威胁模型。
+- `exp.md`：本 exp 相关的重要信息和结论。
+- 其它环境搭建过程使用的脚本、测试日志等文件。
+
+exp 环境关键信息和报告信息按需更新：
+
+- `findings/<target-BUG>/report.yaml`：根据真实业务影响修正 CVSS、EV、finding_class、标题、影响描述和攻击前提等；声称影响无法达成时下调评分与影响描述，并更新 `exp_status`。
+- `knowledge/build/`：对动态测试环境的关键操作、脚本等。
 
 ## 完成处理
 
@@ -31,6 +41,5 @@ extensions:
 
 # 备注
 
-- 当有沙箱配置时，被测目标的构建、运行等一切动态操作严禁在本地执行，只允许在沙箱内；本地仅做静态动作。沙箱不可达时更新 build.md frontmatter 为 unreachable，本任务标 blocked 退出，不回落本地。
 - 评估环境与真实部署须一致（默认构建配置与默认组件，如默认分配器）；插桩/替代构建只用于缺陷定位，其崩溃行为不作为可利用性判定依据。
-- 按 build.md 记录的环境配方复用环境，不重复构建。
+- 沙箱规则见 AGENTS.md；沙箱不可达时更新 build.md frontmatter 为 unreachable，本任务标 blocked 退出，不回落本地。

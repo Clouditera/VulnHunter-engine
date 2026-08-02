@@ -18,11 +18,13 @@ extensions:
 
 # 目标
 
-处理一个 `todo/HYP-*.md` 风险假设，静态研判其成立性：攻击路径是否可达、危害是否成立。
+处理一个 HYP 风险假设，静态研判其成立性：攻击路径是否可达、危害是否成立。
 
 当前任务只做静态代码分析，不编写或运行测试程序。
 
 # 产出
+
+读取当前 `todo/HYP-*.md` 任务，按其正文意图聚焦重点和边界。HYP 正文包含漏洞主张、代码锚点、风险类型和提出原因。
 
 ## 研判
 
@@ -32,7 +34,7 @@ extensions:
 
 更新当前 HYP 文件的 `hyp_status`，并据裁决产出对应产物：
 
-- **confirmed**：攻击路径成立。产出 `findings/BUG-<HYP 全名>/report.yaml`。`finding_class: vulnerability` 时 `poc_status` 置为 `pending`；可行性存疑不构成降级理由——高危主张且代码路径成立时置 vulnerability 交 POC 实证，存疑点写入报告。若代码问题或风险主张成立，但利用前提苛刻、影响有限、默认威胁模型下价值不足，或仅构成弱点，则将 `finding_class` 置为 `risk`——风险不做 POC/EXP，`poc_status` / `exp_status` 置为 `not-needed`。
+- **confirmed**：攻击路径成立。产出 `findings/BUG-<HYP 全名>/report.yaml`。`finding_class: vulnerability` 时 `poc_status` 置为 `pending`；可行性存疑不构成降级理由：高危主张且代码路径成立时置 vulnerability 交 POC 实证，存疑点写入报告。若代码问题或风险主张成立，但利用前提苛刻、影响有限、默认威胁模型下价值不足，或仅构成弱点，则将 `finding_class` 置为 `risk`——风险不做 POC/EXP，`poc_status` / `exp_status` 置为 `not-needed`。
 - **refuted**：不可达，或攻击者前提不符合威胁模型，或存在有效防护使路径不成立。若缺陷本身存在但当前路径不可达，写 `hunt` 类型回流线索到 `leads/LEAD-*.md`；纯误报不写回流线索。
 
 ## 完成处理
