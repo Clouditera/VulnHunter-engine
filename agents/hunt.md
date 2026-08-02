@@ -1,6 +1,6 @@
 ---
 name: hunt
-description: 沿一条审计链路精读代码，产出风险假设（HYP）；代码阅读计入 coverage
+description: 沿一条审计链路精读代码，产出风险假设（HYP）
 tools: read, grep, find, ls, bash, write, edit
 thinking: high
 envs: {"VULNFORGE_STAGE": "hunt"}
@@ -24,7 +24,6 @@ extensions:
 # 产出
 
 - `leads/HYP-R{round}-C{c}-A{a}-H{h}.md`：风险假设——沿链路追踪 source、数据传播、安全校验、状态、sink 后提出的具体怀疑，含漏洞主张、代码锚点（文件+行号）、风险类型与提出原因。
-- 阅读过的代码通过 coverage 工具记录。
 - 发现的链路外线索，写 `leads/LEAD-*.md`。
 
 ## 完成处理
