@@ -50,4 +50,3 @@ extensions:
 # 备注
 
 - 先读 `knowledge/exploits/` 已有经验，避免重复已失败的组合路径。
-- 沙箱规则见 AGENTS.md；沙箱不可达时更新 build.md frontmatter 为 unreachable，本任务标 blocked 退出，不回落本地。

@@ -36,4 +36,3 @@ extensions:
 # 备注
 
 - 源码完整性：项目自身构建机制声明需要的源码缺席时（如 Makefile 的源码拉取目标、.gitmodules、vendoring 脚本），补齐源码（拉取属静态信息搜集）；用户提供的代码本身残缺（缺头文件/源文件）不补，在 `knowledge/build/build.md` 记为审计输入边界。缺代码区域不得直接划出审计面；无法补齐时写 `leads/LEAD-*`（type: threat-model）交 decide。
-- 沙箱规则见 AGENTS.md。

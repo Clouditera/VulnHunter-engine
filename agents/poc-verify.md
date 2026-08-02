@@ -39,4 +39,3 @@ poc 环境关键信息和报告信息按需更新：
 
 - 只对 `finding_class: vulnerability` 的 finding 复现；`risk` 类不做 POC。
 - 对含存疑点的 finding，须对存疑点给出实验结论。
-- 沙箱规则见 AGENTS.md；沙箱不可达时本任务标 blocked 退出。
