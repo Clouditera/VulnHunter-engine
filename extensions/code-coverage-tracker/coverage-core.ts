@@ -235,21 +235,35 @@ function aggregateEvents(jsonlPath: string, map: CoverageMap): boolean {
     for (const line of newContent.split("\n")) {
       const trimmed = line.trim();
       if (!trimmed) continue;
-      let evt: CoverageEvent;
+      let evt: CoverageEvent & { files?: unknown };
       try { evt = JSON.parse(trimmed); } catch { continue; } // skip corrupt/incomplete lines
 
-      const rec: FileCoverage = map.files[evt.file] ?? {
-        path: evt.file, total_lines: 0, read_lines: 0, coverage: 0,
-        ranges: [], read_count: 0, stages: [],
-      };
+      // 两种事件形态：单文件 {file,start,end}（hunt 精读）与
+      // 批量清单 {files:[...]}（cognize 等，无行区间）。缺少有效文件字段则跳过，
+      // 否则会把 undefined 写进 map.files 的 path，后续 split/startsWith 全线崩。
+      const fileList: string[] =
+        typeof evt.file === "string" && evt.file.length > 0
+          ? [evt.file]
+          : Array.isArray(evt.files)
+            ? evt.files.filter((f): f is string => typeof f === "string" && f.length > 0)
+            : [];
+      if (fileList.length === 0) continue;
 
-      if (evt.end >= evt.start) rec.ranges.push([evt.start, evt.end]);
-      rec.read_count += 1;
-      rec.first_read_at ??= evt.ts;
-      rec.last_read_at = evt.ts;
-      if (evt.stage && !rec.stages.includes(evt.stage)) rec.stages.push(evt.stage);
-      map.files[evt.file] = rec;
-      processed++;
+      for (const file of fileList) {
+        const rec: FileCoverage = map.files[file] ?? {
+          path: file, total_lines: 0, read_lines: 0, coverage: 0,
+          ranges: [], read_count: 0, stages: [],
+        };
+
+        if (typeof evt.start === "number" && typeof evt.end === "number" && evt.end >= evt.start)
+          rec.ranges.push([evt.start, evt.end]);
+        rec.read_count += 1;
+        rec.first_read_at ??= evt.ts;
+        rec.last_read_at = evt.ts;
+        if (evt.stage && !rec.stages.includes(evt.stage)) rec.stages.push(evt.stage);
+        map.files[file] = rec;
+        processed++;
+      }
     }
 
     map.last_event_offset = currentSize;
