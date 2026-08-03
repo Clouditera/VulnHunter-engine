@@ -31,18 +31,22 @@ export PI_CODING_AGENT_DIR=$PWD
 
 ## 使用
 
-**仓库根即 agent dir**（`PI_CODING_AGENT_DIR` 指向本仓库，模型/主提示词/扩展/agents 全部默认就位）。
+**仓库根即 agent dir**；启动走仓库自带的 `vf` 启动器（它会自动 export `PI_CODING_AGENT_DIR`）。
+
+主会话（decide）系统提示词 = `AGENTS.md`（全局身份）+ `main-prompt.md`（decide 任务）；扩展按需显式挂载（tracker 不挂主会话，decide 阅读不计 coverage）；子会话提示词 = AGENTS.md + 任务书正文（pi-subagents fork 自动前置拼接）。
 
 ### 启动（交互 TUI，可同时测试多个项目）
 
 ```bash
 # 审计专用入口（建议写进 shell rc）：--no-skills 屏蔽 ~/.agents/skills 等外部技能源，
 # 保证审计会话的工具面干净；日常 pi 使用不受影响
-alias pia='PI_CODING_AGENT_DIR=/path/to/VulnForge-Chat pi --no-skills'
+alias pia='/path/to/VulnForge-Chat/vf --no-skills'
 
 cd /path/to/项目A && pia     # 每个项目一个 TUI 会话，互不干扰
 cd /path/to/项目B && pia     # 会话按 cwd 自动隔离（sessions/<目录编码>/）
 ```
+
+> 改提示词/agents/扩展后重启会话（pi -c）即生效。
 
 第一句话给出意图：`开始审计。audit_scope: …；vuln_focus: …`（目标即当前目录；参数英文名 + 中文备注见 main-prompt）
 产物位置：**工作区根默认 `<项目>/.vulnforge`**（todo/ findings/ knowledge/ report/ 等全部在其下，项目根零污染；意图中可用 `output_dir: <路径>` 另指）。
