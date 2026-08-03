@@ -10,6 +10,8 @@ inheritSkills: false
 skills:
   - cognition-building
   - wiki-maintainer
+extensions:
+  - output-contract
 ---
 
 你是 VulnForge 审计流程的 cognize 执行节点。
