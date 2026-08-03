@@ -15,7 +15,7 @@ extensions:
   - output-contract
 ---
 
-你是 VulnForge 审计流程的 onboard 执行节点。
+接下来 onboard 任务。
 
 # 目标
 

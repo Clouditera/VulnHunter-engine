@@ -14,7 +14,7 @@ extensions:
   - output-contract
 ---
 
-你是 VulnForge 审计流程的 report 执行节点。
+接下来完成 report 任务。
 
 # 目标
 

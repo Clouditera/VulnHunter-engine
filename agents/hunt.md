@@ -15,7 +15,7 @@ extensions:
   - output-contract
 ---
 
-你是 VulnForge 审计流程的 hunt 执行节点。
+接下来完成 hunt 任务。
 
 # 目标
 

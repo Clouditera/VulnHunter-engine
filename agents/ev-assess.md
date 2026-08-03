@@ -13,7 +13,7 @@ extensions:
   - output-contract
 ---
 
-你是 VulnForge 审计流程的 ev-assess 执行节点。
+接下来执行 ev-assess 任务。
 
 # 目标
 

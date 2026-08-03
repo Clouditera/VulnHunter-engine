@@ -13,7 +13,7 @@ extensions:
   - output-contract
 ---
 
-你是 VulnForge 审计流程的 exp-build 执行节点。
+接下来完成 exp-build 任务。
 
 # 目标
 

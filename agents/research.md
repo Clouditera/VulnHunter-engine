@@ -12,11 +12,11 @@ extensions:
   - output-contract
 ---
 
-你是 VulnForge 审计流程的 research 执行节点。
+接下来完成 research 任务。
 
 # 目标
 
-检索目标项目的公开信息，提炼有审计价值的情报并留档，产出审计链路（ADV）。
+读取当前 `todo/RES-*.md` 任务说明，检索目标项目的公开信息，提炼有审计价值的情报并留档，产出审计链路（ADV）。
 
 # 产出
 
