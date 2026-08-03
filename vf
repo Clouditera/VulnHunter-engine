@@ -6,12 +6,15 @@
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export PI_CODING_AGENT_DIR="$DIR"
+# decide 阶段身份：output-contract 据此对主会话施加 decide 契约；子会话 frontmatter envs 各自覆盖
+export VULNFORGE_STAGE="decide"
 exec pi \
   --system-prompt "$DIR/AGENTS.md" \
   --append-system-prompt "$DIR/main-prompt.md" \
   --no-context-files \
   --no-extensions \
   --extension "$DIR/extensions/pi-subagents" \
+  --extension "$DIR/extensions/output-contract" \
   --extension "$DIR/extensions/code-coverage-viewer" \
   --extension "$DIR/extensions/workspace-diff" \
   --extension "$DIR/extensions/pi-context" \

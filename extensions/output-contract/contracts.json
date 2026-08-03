@@ -272,5 +272,94 @@
         "schema": "schemas/lead.schema.yaml"
       }
     ]
+  },
+  "decide": {
+    "strict": true,
+    "rules": [
+      {
+        "pattern": "decision.yaml",
+        "schema": "schemas/decision.schema.yaml",
+        "min_count": 0
+      },
+      {
+        "pattern": "todo/*.md",
+        "min_count": 0,
+        "schema": "schemas/todo.schema.yaml"
+      },
+      {
+        "pattern": "todo/COG-*.md",
+        "min_count": 0,
+        "schema": "schemas/cog.schema.yaml"
+      },
+      {
+        "pattern": "todo/ADV-*.md",
+        "min_count": 0,
+        "schema": "schemas/advice.schema.yaml"
+      },
+      {
+        "pattern": "todo/HYP-*.md",
+        "min_count": 0,
+        "schema": "schemas/hypothesis.schema.yaml"
+      },
+      {
+        "pattern": "todo/POC-*.md",
+        "min_count": 0,
+        "schema": "schemas/poc.schema.yaml"
+      },
+      {
+        "pattern": "todo/EXP-*.md",
+        "min_count": 0,
+        "schema": "schemas/exp.schema.yaml"
+      },
+      {
+        "pattern": "todo/onboard-*.md",
+        "min_count": 0,
+        "schema": "schemas/todo.schema.yaml"
+      },
+      {
+        "pattern": "done/**",
+        "min_count": 0
+      },
+      {
+        "pattern": "leads/LEAD-*.md",
+        "min_count": 0,
+        "schema": "schemas/lead.schema.yaml"
+      },
+      {
+        "pattern": "leads/ADV-*.md",
+        "min_count": 0,
+        "schema": "schemas/advice.schema.yaml"
+      },
+      {
+        "pattern": "leads/HYP-*.md",
+        "min_count": 0,
+        "schema": "schemas/hypothesis.schema.yaml"
+      },
+      {
+        "pattern": "todo/CHAIN-*.md",
+        "min_count": 0,
+        "schema": "schemas/chain-task.schema.yaml"
+      },
+      {
+        "pattern": "knowledge/wiki/threat-model.md",
+        "min_count": 0
+      },
+      {
+        "pattern": "knowledge/wiki/index.md",
+        "min_count": 0
+      },
+      {
+        "pattern": "knowledge/wiki/**/*.md",
+        "min_count": 0
+      },
+      {
+        "pattern": "knowledge/worklog.md",
+        "min_count": 0
+      },
+      {
+        "pattern": "knowledge/goal.md",
+        "min_count": 0
+      }
+    ]
   }
 }
