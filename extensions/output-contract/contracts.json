@@ -277,11 +277,6 @@
     "strict": true,
     "rules": [
       {
-        "pattern": "decision.yaml",
-        "schema": "schemas/decision.schema.yaml",
-        "min_count": 0
-      },
-      {
         "pattern": "todo/*.md",
         "min_count": 0,
         "schema": "schemas/todo.schema.yaml"

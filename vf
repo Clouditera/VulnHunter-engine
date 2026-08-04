@@ -16,6 +16,7 @@ exec pi \
   --extension "$DIR/extensions/pi-subagents" \
   --extension "$DIR/extensions/output-contract" \
   --extension "$DIR/extensions/code-coverage" \
+  --extension "$DIR/extensions/audit-lifecycle" \
   --extension "$DIR/extensions/workspace-diff" \
   --extension "$DIR/extensions/pi-context" \
   --extension "$DIR/extensions/session-archive" \

@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync, readdirSync, statSync, openSync, readSync, fstatSync, closeSync } from "node:fs";
-import path from "node:path";
+import path, { join } from "node:path";
 
 // ============================================================================
 // Constants
@@ -512,4 +512,72 @@ export function recordReadCoverageEvent(args: {
   if (end < start) return;
 
   appendEvent(args.jsonlPath, { file: rel, start, end, stage: args.stage, ts: new Date().toISOString() });
+}
+
+// ===========================================================================
+// Scope（mark_scope 标记范围）：.vulnforge/scope.yaml
+// ===========================================================================
+
+export interface ScopeEntry { path: string; threshold: number }
+export interface ScopeDef { entries: ScopeEntry[]; excludes: string[] }
+
+/** 极简解析：仅支持本工具写出的固定形状（entries: - path/threshold；excludes: - x）。 */
+export function parseScopeYaml(text: string): ScopeDef {
+  const entries: ScopeEntry[] = [];
+  const excludes: string[] = [];
+  let section: "entries" | "excludes" | null = null;
+  let cur: Partial<ScopeEntry> | null = null;
+  for (const raw of text.split("\n")) {
+    const line = raw.trimEnd();
+    const t = line.trim();
+    if (t === "entries:") { section = "entries"; continue; }
+    if (t === "excludes:") { section = "excludes"; if (cur?.path) { entries.push({path: cur.path, threshold: cur.threshold ?? 90}); cur=null; } continue; }
+    if (section === "entries") {
+      const m = t.match(/^-\s*path:\s*(.+)$/);
+      if (m) { if (cur?.path) entries.push({path: cur.path, threshold: cur.threshold ?? 90}); cur = { path: m[1].trim().replace(/^["']|["']$/g, "") }; continue; }
+      const th = t.match(/^threshold:\s*(\d+)/);
+      if (th && cur) { cur.threshold = parseInt(th[1], 10); continue; }
+    } else if (section === "excludes") {
+      const m = t.match(/^-\s*(.+)$/);
+      if (m) excludes.push(m[1].trim().replace(/^["']|["']$/g, ""));
+    }
+  }
+  if (cur?.path) entries.push({ path: cur.path, threshold: cur.threshold ?? 90 });
+  return { entries, excludes };
+}
+
+export function loadScope(outputDir: string): ScopeDef | null {
+  const p = join(outputDir, "scope.yaml");
+  if (!existsSync(p)) return null;
+  try { const s = parseScopeYaml(readFileSync(p, "utf-8")); return s.entries.length ? s : null; } catch { return null; }
+}
+
+/** 路径是否落在某个 scope 条目中（目录前缀/文件精确/简单 glob * 后缀）。 */
+export function scopeEntryMatches(entryPath: string, rel: string): boolean {
+  const e = entryPath.replace(/\/+$/g, "");
+  if (e.endsWith("*")) { const pre = e.slice(0, -1); return rel.startsWith(pre); }
+  return rel === e || rel.startsWith(e + "/");
+}
+
+export function inScope(scope: ScopeDef, rel: string): boolean {
+  if (scope.excludes.some((x) => scopeEntryMatches(x, rel))) return false;
+  return scope.entries.some((en) => scopeEntryMatches(en.path, rel));
+}
+
+export interface ScopeStat { path: string; threshold: number; total: number; read: number; pct: number; pass: boolean }
+
+/** 逐 scope 条目的覆盖统计（分母=标记文件总行数）。 */
+export function perScopeStats(map: CoverageMap, scope: ScopeDef): ScopeStat[] {
+  return scope.entries.map((en) => {
+    let total = 0, read = 0;
+    for (const f of Object.values(map.files)) {
+      if (!f || typeof f.path !== "string") continue;
+      if (scope.excludes.some((x) => scopeEntryMatches(x, f.path))) continue;
+      if (!scopeEntryMatches(en.path, f.path)) continue;
+      total += f.total_lines || 0;
+      read += Math.min(f.total_lines || 0, f.read_lines || 0);
+    }
+    const pct = total > 0 ? Math.round((read / total) * 1000) / 10 : 100;
+    return { path: en.path, threshold: en.threshold, total, read, pct, pass: pct >= en.threshold };
+  });
 }

@@ -4,7 +4,9 @@
 
 # 任务意图
 
-启动消息给出运行级参数。核心两项：`audit_scope`（审计范围）、`vuln_focus`（漏洞关注）——缺失时先向用户问清再推进。其余均可选：`sched_instr`（调度约束，默认无）、`user_instr`（用户补充说明）、`output_lang`（输出语言，默认 zh-CN）、`enable_poc` / `enable_exp` / `enable_chain`（启用 POC/EXP/组合链，默认随 `sandbox_cfg` 联动：给出沙箱配置时默认启用，未给出默认不启用）、`sandbox_cfg`（沙箱配置，默认无；给出时被测目标的一切动态构建、运行都只在沙箱内完成，不回落本地，详见 AGENTS.md 沙箱规则）。R0 把它们全部落到 `knowledge/goal.md`——这是意图的唯一持久存放点，上下文压缩也丢不掉；子会话任务书所需的运行级参数从 goal.md 读取转述。每轮决策以意图为准；`sched_instr` 优先级高于 `audit_scope`，超出 `sched_instr` 的缺口留待后续运行，不因此扩大本次范围。
+启动消息给出运行级参数。核心两项：`audit_scope`（审计范围）、`vuln_focus`（漏洞关注）——缺失时先向用户问清再推进。其余均可选：`sched_instr`（调度约束，默认无）、`user_instr`（用户补充说明）、`output_lang`（输出语言，默认 zh-CN）、`enable_poc` / `enable_exp` / `enable_chain`（启用 POC/EXP/组合链，默认随 `sandbox_cfg` 联动：给出沙箱配置时默认启用，未给出默认不启用）、`sandbox_cfg`（沙箱配置，默认无；给出时被测目标的一切动态构建、运行都只在沙箱内完成，不回落本地，详见 AGENTS.md 沙箱规则）。R0 把它们全部落到 `knowledge/goal.md`——这是意图的唯一持久存放点，上下文压缩也丢不掉；子会话任务书所需的运行级参数从 goal.md 读取转述。
+
+**任务生命周期（机械保障）**：与用户对话确认审计范围后调用 `mark_scope` 落范围标记（逐范围覆盖率阈值，默认 90%），再调 `start_scan` 正式开始；收尾调 `report` 工具验收（机械预检 + report 子会话隔离复核）。全部停手而未验收时，系统会补发提醒。每轮决策以意图为准；`sched_instr` 优先级高于 `audit_scope`，超出 `sched_instr` 的缺口留待后续运行，不因此扩大本次范围。
 
 **启动目录校验（R0 先做）**：本流程必须在目标项目根目录下启动——目标即当前目录，工作区根、coverage 统计、代码阅读都以它为锚。意图中若出现指向其它路径的目标表述，唯一动作是停下来提醒用户：请 `cd` 到目标项目目录后重启会话（或在意图中显式确认目标与目录分离；该模式下 coverage 失效，需在 goal.md 标注）。校验通过前不派发任何任务，也不允许用子会话 cwd 参数绕过。
 
@@ -32,7 +34,7 @@
 
 ## 派发本轮任务
 
-综合项目认知、覆盖率、任务池、上轮结果和用户指令选择本轮唯一方向，写入 `decision.yaml` 并准备任务文件；`completion reason` 中超出 `sched_instr` 的缺口留待后续运行。同一方向可派发多个任务，frontmatter 统一为 `round` / `id` / `status: pending`。
+综合项目认知、覆盖率、任务池、上轮结果和用户指令选择本轮唯一方向，准备任务文件；`completion reason` 中超出 `sched_instr` 的缺口留待后续运行。同一方向可派发多个任务，frontmatter 统一为 `round` / `id` / `status: pending`。
 
 - **onboard**：项目画像/初始化产物缺失；启用 POC/EXP 且缺少动态环境记录。创建 `todo/onboard-*.md`。
 - **cognize**：有代码区域尚未被覆盖到时，可以创建一个或多个 `todo/COG-*.md`，由 `cognize` 阅读代码产出审计链路 `ADV`。
@@ -45,11 +47,11 @@
 
 「动态环境可用」即 `knowledge/build/build.md` frontmatter 中 `sandbox` 为 available；为 unreachable 时不派发动态任务，`sched_instr` 范围内只剩动态工作时走 exit。
 - **report**：`sched_instr` 范围内无待推进项时，交由 report 复核；范围外 `leads/` 不阻止进入 report，也不创建 `REPORT-*` 任务。
-- **exit**：目标项目不完整、动态环境不满足 POC/EXP 需要等异常情况时，退出任务。写 `decision.yaml.next: exit`。
+- **exit**：目标项目不完整、动态环境不满足 POC/EXP 需要等异常情况时，退出任务。在 `knowledge/worklog.md` 记录 exit 决策与原因。
 
 未选中的 ADV、HYP、EXP 候选和静态候选留在 `leads/` 原处，等待后续轮次处理。
 
-**report 之后**（会话化适配）：读取 `report/completion.yaml`——`incomplete` 时按 reason 的缺口清单继续推进（回到相应调度方向）；`complete` 时收尾退出。
+**report 之后**（会话化适配）：收尾调用 `report` 工具——机械预检（覆盖率阈值/pending 状态）不过则返回差距清单继续推进；过了派 report 子会话复核，`incomplete` 按缺口继续，`complete` 收尾退出。
 
 ## 任务正文
 
@@ -61,8 +63,8 @@
 
 在 `knowledge/worklog.md` 追加一条记录，字段 `Round | Decision | Reason`：
 
-- `Round`：`decision.yaml` 的 `round` 字段。
-- `Decision`：`decision.yaml` 的 `next` 字段，即本轮选定的方向（onboard / cognize / hunt / verify / poc-verify / ev-assess / exp-build / report / exit）。
+- `Round`：本轮轮次序号。
+- `Decision`：本轮选定的方向（onboard / cognize / hunt / verify / poc-verify / ev-assess / exp-build / report / exit）。
 - `Reason`：一句话说明本轮为什么这么选择。
 
 # 派发方式

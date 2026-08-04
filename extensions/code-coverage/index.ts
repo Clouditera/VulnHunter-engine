@@ -17,6 +17,8 @@ import {
   aggregateCoverageEvents,
   getCoveragePaths,
   loadCoverageMap,
+  perScopeStats,
+  loadScope,
   persistCoverageMap,
   recordReadCoverageEvent,
   renderCoverage,
@@ -52,16 +54,30 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool(defineTool({
     name: "coverage",
     label: "Coverage",
-    description: "查看代码阅读覆盖率。像 tree 命令一样浏览项目的代码阅读覆盖情况。",
-    promptSnippet: "coverage(path?, depth?) — 查看代码阅读覆盖率树。不传参数返回全局概览，传目录路径展开子项，传文件路径查看行级覆盖详情。depth 控制展开深度（默认 1）。",
+    description: "查看代码阅读覆盖率。scope=global 看全项目，scope=marked 看 mark_scope 标记范围（逐范围对照阈值）。",
+    promptSnippet: "coverage(scope, path?, depth?) — scope 必填：\"global\" 全项目覆盖 / \"marked\" 标记范围对照阈值。path/depth 仅 global 视图使用。",
     parameters: Type.Object({
-      path: Type.Optional(Type.String({ description: "目录或文件路径（相对于项目根目录）。省略则显示项目根级概览。" })),
-      depth: Type.Optional(Type.Number({ description: "目录树展开深度，默认 1。类似 tree -L。", default: 1 })),
+      scope: Type.Union([Type.Literal("global"), Type.Literal("marked")], { description: "必填。global=全项目；marked=mark_scope 标记范围（逐范围覆盖率 vs 阈值）。" }),
+      path: Type.Optional(Type.String({ description: "目录或文件路径（相对于项目根目录，仅 global）。省略则显示项目根级概览。" })),
+      depth: Type.Optional(Type.Number({ description: "目录树展开深度，默认 1（仅 global）。", default: 1 })),
     }),
 
     async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
       if (aggregateCoverageEvents(jsonlPath, map)) {
         persistCoverageMap(map, jsonPath);
+      }
+
+      if (params.scope === "marked") {
+        const scope = loadScope(resolvedOutputDir);
+        if (!scope) {
+          return { content: [{ type: "text" as const, text: "尚未标记范围（.vulnforge/scope.yaml 不存在）——decide 先用 mark_scope 与用户确认审计范围。" }] };
+        }
+        const stats = perScopeStats(map, scope);
+        const lines = stats.map((st) =>
+          `${st.pass ? "✅" : "❌"} ${st.path}  ${st.pct}%（${st.read}/${st.total} 行，阈值 ${st.threshold}%）`);
+        const failed = stats.filter((st) => !st.pass).length;
+        return { content: [{ type: "text" as const, text:
+          `标记范围覆盖（${stats.length - failed}/${stats.length} 达标）：\n` + lines.join("\n") }] };
       }
 
       return {
