@@ -1,10 +1,10 @@
 ---
 name: onboard
+systemPrompt: AGENTS.md
 description: 初始化项目画像、wiki、威胁模型与动态运行环境（首轮执行）
 tools: read, grep, find, ls, bash, write, edit
 thinking: high
 envs: {"VULNFORGE_STAGE": "onboard"}
-systemPromptMode: replace
 inheritProjectContext: false
 inheritSkills: false
 skills:

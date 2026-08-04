@@ -1,10 +1,10 @@
 ---
 name: report
+systemPrompt: AGENTS.md
 description: 隔离完成复核：只看产物与完成条件，附原始证据，产出审计报告与 completion.yaml
 tools: read, grep, find, ls, bash, write, edit, coverage
 thinking: high
 envs: {"VULNFORGE_STAGE": "report"}
-systemPromptMode: replace
 inheritProjectContext: false
 inheritSkills: false
 skills:

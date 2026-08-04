@@ -1,10 +1,10 @@
 ---
 name: poc-verify
+systemPrompt: AGENTS.md
 description: 对静态确认的候选做动态复现；对含存疑点的 finding 做成立性实证（沙箱内执行）
 tools: read, grep, find, ls, bash, write, edit
 thinking: max
 envs: {"VULNFORGE_STAGE": "poc-verify"}
-systemPromptMode: replace
 inheritProjectContext: false
 inheritSkills: false
 skills:

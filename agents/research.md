@@ -1,10 +1,10 @@
 ---
 name: research
+systemPrompt: AGENTS.md
 description: 检索公开信息，情报留档 knowledge/research/，产出审计链路（ADV）
 tools: read, grep, find, ls, bash, write, edit
 thinking: high
 envs: {"VULNFORGE_STAGE": "research"}
-systemPromptMode: replace
 inheritProjectContext: false
 inheritSkills: false
 extensions:

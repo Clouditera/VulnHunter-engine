@@ -1,10 +1,10 @@
 ---
 name: ev-assess
+systemPrompt: AGENTS.md
 description: 单漏洞真实影响评估：准业务环境下评估最大影响，达不到时降级报告（沙箱内执行）
 tools: read, grep, find, ls, bash, write, edit
 thinking: max
 envs: {"VULNFORGE_STAGE": "ev-assess"}
-systemPromptMode: replace
 inheritProjectContext: false
 inheritSkills: false
 skills:
