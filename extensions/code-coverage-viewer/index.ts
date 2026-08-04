@@ -10,11 +10,9 @@ import {
 } from "./coverage-core.ts";
 
 export default function (pi: ExtensionAPI) {
-  // 会话化：工作区根 = <cwd>/.vulnforge（存在即采用，否则 cwd）；目标根 = cwd
+  // 工作区根定死 <cwd>/.vulnforge；目标根 = cwd
   const cwd = process.cwd();
-  const outputDir = require("node:fs").existsSync(path.join(cwd, ".vulnforge"))
-    ? path.join(cwd, ".vulnforge")
-    : cwd;
+  const outputDir = path.join(cwd, ".vulnforge");
   const workDir = cwd;
 
   const { jsonPath, jsonlPath } = getCoveragePaths(outputDir);

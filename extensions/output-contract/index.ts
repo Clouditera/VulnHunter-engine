@@ -8,7 +8,7 @@
  *
  * 阶段识别：仅认 VULNFORGE_STAGE（agents frontmatter envs 注入，精确）；
  *           主会话（decide）无此变量，不施加契约。
- * 工作区根：<cwd>/.vulnforge（存在即采用，否则 cwd）。
+ * 工作区根：定死 <cwd>/.vulnforge；flowDir = 仓库根。
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -45,11 +45,10 @@ interface PathCtx {
 // ---------------------------------------------------------------------------
 
 function resolveRoots(): { outputDir: string; flowDir: string } {
-  // 工作区根 = <cwd>/.vulnforge（存在即采用，否则 cwd）；flowDir = 仓库根
+  // 工作区根定死 <cwd>/.vulnforge；flowDir = 仓库根
   const cwd = process.cwd();
   const repoRoot = resolve(__dirname, "..", "..");
-  const vf = resolve(cwd, ".vulnforge");
-  return { outputDir: existsSync(vf) ? vf : cwd, flowDir: repoRoot };
+  return { outputDir: resolve(cwd, ".vulnforge"), flowDir: repoRoot };
 }
 
 export default function (pi: ExtensionAPI) {

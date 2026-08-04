@@ -18,7 +18,7 @@
  *      includes decide's own writes, so next round's diff is pure execution
  *      delta.
  *
- * 会话化环境：工作区根 = <cwd>/.vulnforge（存在即采用，否则 cwd）；
+ * 会话化环境：工作区根定死 <cwd>/.vulnforge；
  * git-dir = <工作区根>/.wsdiff-git（隐藏目录，coverage 已默认排除）。
  */
 
@@ -34,9 +34,8 @@ const EXCLUDE_LINES = [
 
 export default function (pi: ExtensionAPI) {
   const cwd = process.cwd();
-  const outputDir = existsSync(path.join(cwd, ".vulnforge"))
-    ? path.join(cwd, ".vulnforge")
-    : cwd;
+  // 工作区根定死 <cwd>/.vulnforge
+  const outputDir = path.join(cwd, ".vulnforge");
 
   const gitDir = path.join(outputDir, ".wsdiff-git");
   const workTree = path.resolve(outputDir);
