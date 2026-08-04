@@ -2,6 +2,8 @@
 name: cognize
 systemPrompt: AGENTS.md
 systemPromptMode: append
+defaultContext: fresh
+timeoutMs: 1800000
 description: 对一个代码切面建立认知，产出主题 wiki 与审计链路（ADV）
 tools: read, grep, find, ls, bash, write, edit
 thinking: high

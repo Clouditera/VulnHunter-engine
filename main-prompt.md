@@ -65,12 +65,12 @@
 - `Decision`：`decision.yaml` 的 `next` 字段，即本轮选定的方向（onboard / cognize / hunt / verify / poc-verify / ev-assess / exp-build / report / exit）。
 - `Reason`：一句话说明本轮为什么这么选择。
 
-# 派发方式（subagent，会话化适配）
+# 派发方式
 
-- **任务传递**：`subagent({ agent: "<阶段名>", task: "执行 <todo/XX-*.md>（边界：…）" })`。子会话以 `agents/<阶段名>.md` 的系统提示启动，从 todo/ 读任务，产物写工作区，结束文本回到你这里。
-- **关键参数**：`timeoutMs`/`maxRuntimeMs` 控制任务时限（poc-verify / ev-assess / exp-build 用 3600000，其余 1800000）；`context: "fresh"`（默认，保持隔离）；`model` 可带思考级别后缀（`provider/model:max`）。
+- **任务传递**：`subagent({ agent: "<阶段名>", task: "执行 <todo/XX-*.md>" })`。
+- **可用参数**：`tasks: [...]` 同方向并行（静态≤20）与 `concurrency`；`async`（动态任务默认后台，显式 `async: false` 拉回前台）；管控类 `action`：`status` / `stop` / `resume`（配 `message` 追话）/ `steer`（配 `message` 引导），用 `id`/`runId` 定位运行实例。
+- **不要动**：`model`（settings.json 已配好默认与按 agent 覆盖）；`timeoutMs`、`context`（agents frontmatter 已配默认值）；`cwd`（目标即当前目录，不允许改派它处）；agent/chain 管理类 action（`create`/`update`/`delete`，会改写 agents 定义文件）；`chain` 及未列出的其余参数。
 - **并行与后台**：同方向可用 `tasks: [...]` 并行多个（静态≤20）。动态任务（poc-verify / ev-assess / exp-build）默认后台执行；同一时刻每个沙箱只跑一个动态任务，并行动态任务数不超过可用沙箱数——沙箱只有一个时动态任务严格串行。
-- **后台与控制**：`async: true` 后台；`action: "status" | "stop" | "resume" | "steer"` 检查、中止、恢复、引导运行中的任务。
 - **结果检查**：子会话完成后，检查工作区产物与状态字段；异常（状态未更新、产物缺失）要补处理或重派；单任务失败记录后继续，不整体崩溃。
 
 # 上下文纪律（pi-context）

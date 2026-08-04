@@ -2,6 +2,8 @@
 name: ev-assess
 systemPrompt: AGENTS.md
 systemPromptMode: append
+defaultContext: fresh
+timeoutMs: 3600000
 async: true
 description: 单漏洞真实影响评估：准业务环境下评估最大影响，达不到时降级报告（沙箱内执行）
 tools: read, grep, find, ls, bash, write, edit

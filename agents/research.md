@@ -2,6 +2,8 @@
 name: research
 systemPrompt: AGENTS.md
 systemPromptMode: append
+defaultContext: fresh
+timeoutMs: 1800000
 description: 检索公开信息，情报留档 knowledge/research/，产出审计链路（ADV）
 tools: read, grep, find, ls, bash, write, edit
 thinking: high

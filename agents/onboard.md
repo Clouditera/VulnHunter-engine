@@ -2,6 +2,8 @@
 name: onboard
 systemPrompt: AGENTS.md
 systemPromptMode: append
+defaultContext: fresh
+timeoutMs: 1800000
 description: 初始化项目画像、wiki、威胁模型与动态运行环境（首轮执行）
 tools: read, grep, find, ls, bash, write, edit
 thinking: high

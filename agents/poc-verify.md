@@ -2,6 +2,8 @@
 name: poc-verify
 systemPrompt: AGENTS.md
 systemPromptMode: append
+defaultContext: fresh
+timeoutMs: 3600000
 async: true
 description: 对静态确认的候选做动态复现；对含存疑点的 finding 做成立性实证（沙箱内执行）
 tools: read, grep, find, ls, bash, write, edit

@@ -2,6 +2,8 @@
 name: verify
 systemPrompt: AGENTS.md
 systemPromptMode: append
+defaultContext: fresh
+timeoutMs: 1800000
 description: 对风险假设做单遍成立性研判，裁决 confirmed（产出 finding）或 refuted
 tools: read, grep, find, ls, bash, write, edit
 thinking: high
