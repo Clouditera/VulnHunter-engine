@@ -7,14 +7,14 @@ timeoutMs: 1800000
 description: 沿一条审计链路精读代码，产出风险假设（HYP）
 tools: read, grep, find, ls, bash, write, edit
 thinking: high
-envs: {"VULNFORGE_STAGE": "hunt"}
+envs: {"VULNFORGE_STAGE": "hunt", "VULNFORGE_COVERAGE_TRACK": "1"}
 inheritProjectContext: false
 inheritSkills: false
 skills:
   - hypothesis-writer
   - wiki-maintainer
 extensions:
-  - code-coverage-tracker
+  - code-coverage
   - output-contract
 ---
 
@@ -41,4 +41,4 @@ extensions:
 - 反向 ADV（`ADV-R*-S*-A*`）：从已知危险位置反向追，找攻击者能否从真实入口到达这个 sink。
 - 对低置信度但值得查的风险，倾向写成 HYP；对没有代码锚点的猜测，不写 HYP。
 - 对证据不足的方向，可以把问题写入 wiki 或回流线索，避免遗漏后续追踪点。
-- 在阅读目标源代码时，请使用 `read` 工具，以便正确记录审计进展。
+- 注意！在阅读目标源代码时，请使用 `read` 工具，以便正确记录审计进展。

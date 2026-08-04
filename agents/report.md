@@ -13,7 +13,7 @@ inheritSkills: false
 skills:
   - report-generator
 extensions:
-  - code-coverage-viewer
+  - code-coverage
   - output-contract
 ---
 
