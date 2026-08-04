@@ -1,6 +1,7 @@
 ---
 name: exp-build
 systemPrompt: AGENTS.md
+systemPromptMode: append
 description: 组合漏洞探索：基于已完成 ev-assess 的原语，自主探索并构造破坏力最大的漏洞组合（沙箱内执行）
 tools: read, grep, find, ls, bash, write, edit
 thinking: max

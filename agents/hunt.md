@@ -1,6 +1,7 @@
 ---
 name: hunt
 systemPrompt: AGENTS.md
+systemPromptMode: append
 description: 沿一条审计链路精读代码，产出风险假设（HYP）
 tools: read, grep, find, ls, bash, write, edit
 thinking: high
