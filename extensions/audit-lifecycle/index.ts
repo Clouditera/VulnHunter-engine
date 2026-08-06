@@ -3,12 +3,12 @@
  *
  * 三个工具 + 一个结束钩子，仅挂主会话（decide）：
  *   mark_scope  —— 与用户确认审计范围后落标记：.vulnforge/scope.yaml（逐范围 threshold，默认 90）
- *   start_scan  —— 任务正式开始：写 scan-state.json（scope_hash 锚定范围版本）+ wsdiff-git 基线 commit
+ *   start_scan  —— 任务正式开始：写 scan-state.json（scope_hash 锚定范围版本）
  *   report      —— 收尾验收：① 机械预检（逐 scope 覆盖率达标？无 poc/exp pending？）
  *                  不过直接返回差距；② 过 → delegation 事件桥派 report 子会话做语义验收，
  *                  读 report/completion.yaml 返回结论。
  *   结束钩子    —— turn_end 且 pi-subagents 无在跑子会话时：若 scan 已开始而 report
- *                  未验收（或验收后工作区有新进展），steer 补发提示（maxRetries 防死循环）。
+ *                  未验收（或验收后工作区有新进展，产物指纹对比），steer 补发提示（maxRetries 防死循环）。
  *                  用户打断无 turn_end 不触发；worklog 最近决策为 exit 时静默。
  */
 import { Type } from "@mariozechner/pi-ai";
@@ -34,7 +34,7 @@ const MAX_GATE_REMINDERS = 2;
 interface ScanState {
   started_at: string;
   scope_hash: string;
-  last_report: { at: string; verdict: string; commit: string | null } | null;
+  last_report: { at: string; verdict: string; fingerprint: string } | null;
 }
 
 export default function (pi: ExtensionAPI) {
@@ -42,7 +42,6 @@ export default function (pi: ExtensionAPI) {
   const outputDir = path.join(cwd, ".vulnforge");
   const scopePath = path.join(outputDir, "scope.yaml");
   const statePath = path.join(outputDir, "scan-state.json");
-  const gitDir = path.join(outputDir, ".wsdiff-git");
 
   // ------------------------------------------------------------------ helpers
 
@@ -54,32 +53,24 @@ export default function (pi: ExtensionAPI) {
   const scopeHash = (): string =>
     existsSync(scopePath) ? createHash("sha256").update(readFileSync(scopePath)).digest("hex").slice(0, 16) : "";
 
-  const git = async (args: string[]) =>
-    pi.exec("git", ["--git-dir", gitDir, "--work-tree", outputDir, ...args], { cwd: outputDir });
-
-  const ensureRepo = async () => {
-    if (existsSync(path.join(gitDir, "HEAD"))) return;
-    mkdirSync(gitDir, { recursive: true });
-    await pi.exec("git", ["--git-dir", gitDir, "init", "-q"], { cwd: outputDir });
-    await git(["config", "user.email", "wsdiff@vulnforge.local"]);
-    await git(["config", "user.name", "workspace-diff"]);
-    await git(["add", "-A"]);
-    await git(["commit", "-q", "-m", "baseline", "--allow-empty"]);
-  };
-
-  const snapshotCommit = async (message: string): Promise<string | null> => {
-    await ensureRepo();
-    await git(["add", "-A"]);
-    await git(["commit", "-q", "-m", message, "--allow-empty"]);
-    const head = await git(["rev-parse", "HEAD"]);
-    return head.code === 0 ? head.stdout.trim() : null;
-  };
-
-  /** 自上次验收 commit 后工作区是否有新进展（有新增 commit 即视为有）。 */
-  const progressSince = async (commit: string | null): Promise<boolean> => {
-    if (!commit) return true;
-    const r = await git(["rev-list", "--count", `${commit}..HEAD`]);
-    return r.code === 0 && parseInt(r.stdout.trim(), 10) > 0;
+  /** 工作区产物指纹：路径+内容聚合哈希；变化即视为有新进展。
+   *  排除 .wsdiff-git（workspace-diff 的私有仓）与 scan-state.json（自身状态）。 */
+  const workspaceFingerprint = (): string => {
+    const hash = createHash("sha256");
+    const walk = (dir: string) => {
+      for (const e of readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+        const full = path.join(dir, e.name);
+        const rel = path.relative(outputDir, full);
+        if (rel === ".wsdiff-git" || rel.startsWith(".wsdiff-git" + path.sep)) continue;
+        if (rel === "scan-state.json") continue;
+        if (e.isDirectory()) { walk(full); continue; }
+        if (!e.isFile()) continue; // 符号链接等不跟随
+        hash.update(rel);
+        hash.update(readFileSync(full));
+      }
+    };
+    if (existsSync(outputDir)) walk(outputDir);
+    return hash.digest("hex");
   };
 
   const hasActiveSubagents = (): boolean => {
@@ -186,9 +177,8 @@ export default function (pi: ExtensionAPI) {
       if (!existsSync(scopePath)) {
         return { content: [{ type: "text" as const, text: "尚未标记审计范围——先与用户确认范围并调用 mark_scope。" }], isError: true };
       }
-      const commit = await snapshotCommit("scan-start");
       writeState({ started_at: new Date().toISOString(), scope_hash: scopeHash(), last_report: null });
-      return { content: [{ type: "text" as const, text: `扫描开始。范围版本 ${scopeHash()}，基线 commit ${commit?.slice(0, 8) ?? "?"}。收尾时调用 report 验收。` }] };
+      return { content: [{ type: "text" as const, text: `扫描开始。范围版本 ${scopeHash()}。基线固化由轮末 workspace_snapshot 负责；收尾时调用 report 验收。` }] };
     },
   }));
 
@@ -216,8 +206,7 @@ export default function (pi: ExtensionAPI) {
         verdict = text.match(/^status:\s*(\S+)/m)?.[1] ?? "unknown";
         reason = text.match(/^reason:\s*(.+)$/m)?.[1] ?? "";
       }
-      const commit = await snapshotCommit("post-report");
-      writeState({ ...state, last_report: { at: new Date().toISOString(), verdict, commit } });
+      writeState({ ...state, last_report: { at: new Date().toISOString(), verdict, fingerprint: workspaceFingerprint() } });
       return { content: [{ type: "text" as const, text: `report 子会话：${r.ok ? "完成" : `异常（${r.info}）`}；completion: ${verdict}${reason ? `——${reason}` : ""}` }] };
     },
   }));
@@ -237,7 +226,7 @@ export default function (pi: ExtensionAPI) {
       const wl = readFileSync(path.join(outputDir, "knowledge", "worklog.md"), "utf-8").trim().split("\n").filter(Boolean).pop() ?? "";
       if (/\bexit\b/i.test(wl)) return;
     } catch { /* 无 worklog 继续判 */ }
-    if (state.last_report && !(await progressSince(state.last_report.commit))) return; // 已验收且无新进展
+    if (state.last_report && workspaceFingerprint() === state.last_report.fingerprint) return; // 已验收且无新进展
     if (reminders >= MAX_GATE_REMINDERS) return;
     reminders++;
     pi.sendUserMessage(
