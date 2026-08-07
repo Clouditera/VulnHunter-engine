@@ -63,6 +63,17 @@ properties:
       ev_rationale:
         type: string
         description: EV 各维度判断依据（逐维度说明）
+      dispute:
+        type: object
+        description: 反驳研判（dispute 阶段写入）：开发者视角取证结论
+        properties:
+          verdict:
+            type: string
+            enum: [upheld, out-of-scope, mitigated, by-design, contested]
+          evidence:
+            type: string
+            description: 排除性 artifact 引用（文件:行号/文档章节/issue URL）；upheld 时写已查资料范围
+        required: [verdict, evidence]
       poc_status:
         type: string
         enum:
