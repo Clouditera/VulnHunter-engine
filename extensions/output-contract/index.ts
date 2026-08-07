@@ -201,7 +201,7 @@ export default function (pi: ExtensionAPI) {
 
     // steer: injected into the agent loop's steering queue,
     // drained on the very next line after turn_end, loop continues
-    pi.sendUserMessage(msg, { deliverAs: "steer" });
+    await pi.sendUserMessage(msg, { deliverAs: "steer" });
   });
 }
 

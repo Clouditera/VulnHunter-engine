@@ -229,7 +229,7 @@ export default function (pi: ExtensionAPI) {
     if (state.last_report && workspaceFingerprint() === state.last_report.fingerprint) return; // 已验收且无新进展
     if (reminders >= MAX_GATE_REMINDERS) return;
     reminders++;
-    pi.sendUserMessage(
+    await pi.sendUserMessage(
       "扫描仍在进行但未验收：请调用 report 工具做收尾验收（覆盖率/未决状态预检 + report 子会话隔离复核）。若确认任务应异常退出，请在 worklog 记录 exit 决策。",
       { deliverAs: "steer" },
     );
