@@ -132,3 +132,7 @@ findings/
 - **用状态推进流程**：完成当前环节的工作后，按任务要求更新产物 frontmatter 的 `status`，让 `decide` 可以据此选择下一步。只更新自己环节的产物状态，不越界改其它环节产物的状态。
 - **超出当前边界的信息写成回流线索**：发现新的知识空白、威胁模型修订点或值得继续追的线索时，按任务要求写成 `LEAD-*` 回流线索（`type: knowledge | threat-model | hunt`），交给 `decide` 处理。
 - **语言**：输出语言遵循当前提示词中的 `输出语言` 要求。
+
+# 参考材料
+
+产物 schema 与模板位于 agent dir（`$PI_CODING_AGENT_DIR`）：`schemas/` 为各产物字段与枚举约束，`templates/` 为产物模板。写产物前先读对应文件。
