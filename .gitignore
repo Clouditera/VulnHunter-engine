@@ -13,6 +13,7 @@ bin/
 run-history.jsonl
 models.json
 settings.json
+trust.json
 node_modules/
 .pi-subagents/
 .vulnforge/

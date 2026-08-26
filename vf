@@ -5,6 +5,10 @@
 # 主会话不挂 code-coverage-tracker（decide 的阅读不计入 coverage——仅记录 hunt）
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# 加载模型 key 等环境变量（models.json 的 $VAR 引用）
+if [[ -f "$DIR/.env" ]]; then
+  set -a; source "$DIR/.env"; set +a
+fi
 export PI_CODING_AGENT_DIR="$DIR"
 # decide 阶段身份：output-contract 据此对主会话施加 decide 契约；子会话 frontmatter envs 各自覆盖
 export VULNFORGE_STAGE="decide"
