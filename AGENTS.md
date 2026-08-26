@@ -54,7 +54,7 @@
 |---|---|
 | `onboard` | 初始化画像、wiki、威胁模型与漏洞认可口径（vuln-policy.md）初版；启用动态时确认执行环境 |
 | `cognize` | 对一个切面建立认知，产出主题 wiki 和待精读的审计链路（ADV） |
-| `research` | 检索公开信息，产出情报档案（knowledge/research/）、补齐漏洞认可口径的 online 取证与审计链路（ADV） |
+| `research` | 检索公开信息，产出情报档案（knowledge/research/）与审计链路（ADV），补齐漏洞认可口径的 online 取证 |
 | `hunt` | 沿一条审计链路精读，产出风险假设（HYP） |
 | `verify` | 对风险假设做成立性研判（代码路径 + 漏洞认可口径核验），给出裁决：confirmed → 转化为 finding，refuted → 关闭 |
 | `poc-verify` | 对静态确认的候选做动态复现 |
@@ -91,7 +91,7 @@ HYP 文件额外包含 `hyp_status` 字段，描述风险假设的研判状态�
 - `knowledge/wiki/index.md`：知识库目录。
 - `knowledge/wiki/overview.md`：项目快速认知（onboard 产出）。
 - `knowledge/wiki/threat-model.md`：威胁模型，是安全判断的基准（onboard 初始化、decide 合并回流线索时维护）。
-- `knowledge/vuln-policy.md`：**漏洞认可口径**——对该项目而言什么样的漏洞会被维护者认可：认可面、排除条款、文档化缓解、by-design 声明，每条带证据锚点（onboard 从本地资料出初版、research 补 online 取证、verify 研判时对照核验）。
+- `knowledge/vuln-policy.md`：**漏洞认可口径**——该项目中什么样的漏洞会被维护者认可：认可面、排除条款、文档化缓解、by-design 声明，每条带证据锚点（onboard 从本地资料出初版、research 补 online 取证、verify 研判时对照核验）。
 - `knowledge/wiki/<主题>.md`：各功能域、攻击面或基础设施认知（cognize 产出）。
 - `knowledge/worklog.md`：逐轮完成记录，帮助判断哪些方向已经做过、审计是否接近完成。
 - `knowledge/build/`：动态测试相关的环境配置和操作记录，核心说明是 `knowledge/build/build.md`。

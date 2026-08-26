@@ -46,11 +46,11 @@ extensions:
 
   政策核验结论写入报告的 `policy_check` 字段（`verdict` + `evidence`）：
   - **upheld**：无排除性 artifact，漏洞主张维持；`evidence` 写明已核验的口径条目与资料范围。`finding_class: vulnerability` 不变。
-  - **out-of-scope**：口径明文排除（如安全策略排除条款、文档化的既定姿态）；
-  - **mitigated**：文档化的缓解措施已覆盖该路径（operator 按文档操作即不成立）；
-  - **by-design**：行为是文档与代码一致声明的设计（非缺陷）；
+  - **out-of-scope**：口径明文排除（如安全策略排除条款、文档化的既定姿态）。
+  - **mitigated**：文档化的缓解措施已覆盖该路径（按文档操作即不成立）。
+  - **by-design**：行为是文档与代码一致声明的设计（非缺陷）。
   - **contested**：artifact 存在但解读有争议，`evidence` 写明双方依据。
-  - `out-of-scope` / `mitigated` / `by-design` / `contested` 成立时：`finding_class` 置为 `risk`（维护者不会按漏洞认，只作风险提示），`poc_status` / `exp_status` 置为 `not-needed`。
+  - `out-of-scope` / `mitigated` / `by-design` / `contested` 成立时：`finding_class` 置为 `risk`（维护者不认定为漏洞，仅作风险提示），`poc_status` / `exp_status` 置为 `not-needed`。
   - 代码问题或风险主张成立但利用前提苛刻、影响有限、默认威胁模型下价值不足，或仅构成弱点时，同样将 `finding_class` 置为 `risk`（此时 `policy_check.verdict` 仍按口径核验结果填写）。
 - **refuted**：不可达，或攻击者前提不符合威胁模型，或存在有效防护使路径不成立。若缺陷本身存在但当前路径不可达，写 `hunt` 类型回流线索到 `leads/LEAD-*.md`；纯误报不写回流线索。
 
