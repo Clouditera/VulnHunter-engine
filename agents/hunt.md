@@ -26,14 +26,14 @@ extensions:
 
 # 产出
 
-读取当前 `todo/ADV-*.md` 任务，按其正文意图聚焦重点和边界。
+读取当前 `todo/ADV-{继承链}.md` 任务，按其正文意图聚焦重点和边界。
 
 - **风险假设 HYP**：当 ADV 中出现值得继续查的安全风险时，写入 `leads/HYP-*.md`。HYP 不要求已经精确成立，但必须有代码锚点、有可检查的路径，并能让后续 verify 环节证实或证伪。编号沿用来源 ADV，例如 `ADV-C2-A3` 对应 `HYP-C2-A3-H1`。产出前查已有 HYP，避免重复。HYP frontmatter 需含 `hyp_status: pending`。
 - **回流线索 LEAD**（可选）：发现新攻击面、新知识、威胁模型修正点，或已看到危险位置有问题但还需要继续查到达路径时，写入 `leads/LEAD-*.md`。
 
 ## 完成处理
 
-退出前把当前 `todo/ADV-*.md` 的 `status` 修改为 `done`，并移动到 `done/`。
+退出前把当前 `todo/ADV-{继承链}.md` 的 `status` 修改为 `done`，并移动到 `done/`。
 
 # 备注
 

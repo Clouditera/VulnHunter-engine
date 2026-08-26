@@ -19,7 +19,7 @@ extensions:
 
 # 目标
 
-读取当前 `todo/RES-*.md` 任务说明，检索目标项目的公开信息，提炼有审计价值的情报并留档，产出审计链路（ADV）。
+读取当前 `todo/RES-S{n}.md` 任务说明，检索目标项目的公开信息，提炼有审计价值的情报并留档，产出审计链路（ADV）。
 
 # 产出
 
@@ -29,9 +29,9 @@ extensions:
 
 ## 完成处理
 
-退出前把当前 `todo/RES-*.md` 的 `status` 修改为 `done`，并移动到 `done/`。
+退出前把当前 `todo/RES-S{n}.md` 的 `status` 修改为 `done`，并移动到 `done/`。
 
 # 备注
 
 - 已有 `knowledge/research/` 档案时先读档案，增量检索，不重复已有结论。vuln-policy 同理增量维护。
-- ADV 按 schema 输出；编号中 S 为 RES 任务的全局序号（RES 任务文件 todo/RES-S{n}.md 全局编号，不随轮次重置）。
+- ADV 按 schema 输出；编号中 S 为 RES 任务的全局序号（对应 `todo/RES-S{n}.md`）。

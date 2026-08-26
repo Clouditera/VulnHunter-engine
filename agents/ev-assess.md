@@ -41,7 +41,7 @@ exp 环境关键信息和报告信息按需更新：
 
 ## 完成处理
 
-退出前把当前 `todo/EXP-*.md` 的 `status` 修改为 `done`，并移动到 `done/`。
+退出前把当前 `todo/EXP-E{n}.md` 的 `status` 修改为 `done`，并移动到 `done/`。
 
 # 备注
 

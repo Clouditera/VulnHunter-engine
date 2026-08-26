@@ -25,7 +25,7 @@ extensions:
 
 # 产出
 
-读取当前 `todo/COG-*.md` 任务，按其正文意图聚焦切面、重点和边界。
+读取当前 `todo/COG-C{n}.md` 任务，按其正文意图聚焦切面、重点和边界。
 
 - **wiki 主题文档**：写入或更新 `knowledge/wiki/<主题>.md`，覆盖切面的功能、入口、权限边界、数据形态、危险位置和初步风险估计。
 - **审计链路 ADV**（可选）：值得继续精读的具体路径，写入 `leads/ADV-*.md`。需有明确代码锚点、边界清楚、粒度合理，能让 hunt 继续追下去。若任务要求基于既有 finding 寻找影响升级面，ADV 正文需说明关联 finding、预期升级路径和有限搜索边界。产出前查已有 ADV 避免重复。
@@ -33,4 +33,4 @@ extensions:
 
 ## 完成处理
 
-退出前把当前 `todo/COG-*.md` 的 `status` 修改为 `done`，并移动到 `done/`。
+退出前把当前 `todo/COG-C{n}.md` 的 `status` 修改为 `done`，并移动到 `done/`。
