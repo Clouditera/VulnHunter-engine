@@ -356,15 +356,5 @@
         "min_count": 0
       }
     ]
-  },
-  "dispute": {
-    "strict": true,
-    "rules": [
-      {
-        "pattern": "findings/BUG-*/report.yaml",
-        "min_count": 0,
-        "schema": "schemas/bug-report.schema.yaml"
-      }
-    ]
   }
 }

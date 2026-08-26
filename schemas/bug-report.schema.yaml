@@ -63,16 +63,16 @@ properties:
       ev_rationale:
         type: string
         description: EV 各维度判断依据（逐维度说明）
-      dispute:
+      policy_check:
         type: object
-        description: 反驳研判（dispute 阶段写入）：开发者视角取证结论
+        description: 漏洞认可口径核验（verify 阶段写入）：维护者视角取证结论。out-of-scope/mitigated/by-design/contested 时 finding_class 应为 risk
         properties:
           verdict:
             type: string
             enum: [upheld, out-of-scope, mitigated, by-design, contested]
           evidence:
             type: string
-            description: 排除性 artifact 引用（文件:行号/文档章节/issue URL）；upheld 时写已查资料范围
+            description: 排除性 artifact 引用（口径条目/文件:行号/文档章节/issue URL）；upheld 时写已核验资料范围
         required: [verdict, evidence]
       poc_status:
         type: string

@@ -4,7 +4,7 @@ systemPrompt: AGENTS.md
 systemPromptMode: append
 defaultContext: fresh
 timeoutMs: 1800000
-description: 初始化项目画像、wiki、威胁模型与动态运行环境（首轮执行）
+description: 初始化项目画像、wiki、威胁模型、漏洞认可口径与动态运行环境（首轮执行）
 tools: read, grep, find, ls, bash, write, edit
 thinking: high
 envs: {"VULNFORGE_STAGE": "onboard"}
@@ -22,7 +22,7 @@ extensions:
 
 # 目标
 
-初始化项目画像、wiki、威胁模型。启用 POC/EXP 时，检查和配置动态运行环境。
+初始化项目画像、wiki、威胁模型、漏洞认可口径。启用 POC/EXP 时，检查和配置动态运行环境。
 
 # 产出
 
@@ -30,6 +30,7 @@ extensions:
 - `knowledge/wiki/index.md`：知识库目录。
 - `knowledge/wiki/overview.md`：项目结构、入口、关键模块和数据流概览。
 - `knowledge/wiki/threat-model.md`：初始资产、信任边界、攻击面和优先审计方向。
+- `knowledge/vuln-policy.md`：**漏洞认可口径**初版——对该项目而言什么样的漏洞会被维护者认可。从项目本地资料取证：SECURITY.md/安全策略、威胁模型文档、部署与配置文档、代码注释/docstring/commit 讯息中声明的设计取舍。分四节记录：**认可面**（历史或明文认可的漏洞类型）、**排除条款**（明文不认可的类型/场景）、**文档化缓解**（有缓解措施覆盖的路径）、**by-design 声明**（文档与代码一致声明的既定行为）。每条结论必须带证据锚点（文件:行号/文档章节）；本地资料没有结论的方面留空并标注「待 online 取证」，由 research 补齐。
 - `knowledge/build/build.md`：记录动态运行环境的现状和配置情况；frontmatter 含 `sandbox: available | unreachable` 与 `updated` 时间。
 
 ## 完成处理
