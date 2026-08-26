@@ -113,7 +113,7 @@ HYP 文件额外包含 `hyp_status` 字段，描述风险假设的研判状态�
 
 ```text
 findings/
-└── BUG-R2-C1-A1-H1/
+└── BUG-C1-A1-H1/
     ├── report.yaml
     ├── poc/
     └── exp/
@@ -129,7 +129,7 @@ findings/
 ## 写入规则
 
 - **信息脱敏**：对外产物只写目标项目本身，不写宿主绝对路径（如 `/home/xxx/...`），**不写审计流程、待办、线索等中间过程概念**。对外路径使用相对路径、脚本自定位路径或占位符，例如 `<poc-dir>`、`<project-src>`；容器内约定路径可以写。
-- **保持可溯源编号**：COG / ADV / HYP / BUG 文件沿链路继承编号：`COG-R{r}-C{c}` → `ADV-R{r}-C{c}-A{a}` → `HYP-R{r}-C{c}-A{a}-H{h}` → `BUG-R{r}-C{c}-A{a}-H{h}`。
+- **保持可溯源编号**：沿链路继承编号（不含轮次段）：`COG-C{c}` → `ADV-C{c}-A{a}` → `HYP-C{c}-A{a}-H{h}` → `BUG-C{c}-A{a}-H{h}`；research 线为 `ADV-S{n}-A{a}`（S=RES 任务全局序号）。各段计数器全局唯一、不随轮次重置：取号前扫描 `leads/`、`todo/`、`done/`、`findings/` 现有同型编号取 max+1；decide 同轮派发多个同类任务时在任务文件中指定各自编号。轮次信息保留在 todo frontmatter `round` 字段与轮锚点中，不进编号。
 - **用状态推进流程**：完成当前环节的工作后，按任务要求更新产物 frontmatter 的 `status`，让 `decide` 可以据此选择下一步。只更新自己环节的产物状态，不越界改其它环节产物的状态。
 - **超出当前边界的信息写成回流线索**：发现新的知识空白、威胁模型修订点或值得继续追的线索时，按任务要求写成 `LEAD-*` 回流线索（`type: knowledge | threat-model | hunt`），交给 `decide` 处理。
 - **语言**：输出语言遵循当前提示词中的 `输出语言` 要求。

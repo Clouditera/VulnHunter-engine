@@ -84,7 +84,7 @@ export default function (pi: ExtensionAPI) {
   // -----------------------------------------------------------------------
   //
   // Artifact IDs are assigned by the model per the naming rules in each
-  // task prompt (e.g. HYP-R{round}-C{cog}-A{adv}-H{hyp}). Cross-worker
+  // task prompt (e.g. HYP-C{cog}-A{adv}-H{hyp}). Cross-worker
   // collisions are prevented structurally: each map worker consumes a
   // distinct input file, so its outputs carry a distinct ID prefix.
   // Frontmatter id format is enforced by the schema bound in contracts.json.

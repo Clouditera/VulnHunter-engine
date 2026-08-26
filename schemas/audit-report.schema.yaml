@@ -60,10 +60,10 @@ properties:
       properties:
         id:
           type: string
-          pattern: "^BUG-R\\d+(-[A-Z]\\d+)+-H\\d+$"
+          pattern: "^BUG-(R\\d+-)?([A-Z]\\d+-)+H\\d+$"
         hypothesis_id:
           type: string
-          pattern: "^HYP-R\\d+(-[A-Z]\\d+)+-H\\d+$"
+          pattern: "^HYP-(R\\d+-)?([A-Z]\\d+-)+H\\d+$"
         title:
           type: string
         severity:
@@ -90,10 +90,10 @@ properties:
       properties:
         id:
           type: string
-          pattern: "^BUG-R\\d+(-[A-Z]\\d+)+-H\\d+$"
+          pattern: "^BUG-(R\\d+-)?([A-Z]\\d+-)+H\\d+$"
         hypothesis_id:
           type: string
-          pattern: "^HYP-R\\d+(-[A-Z]\\d+)+-H\\d+$"
+          pattern: "^HYP-(R\\d+-)?([A-Z]\\d+-)+H\\d+$"
         title:
           type: string
         location:

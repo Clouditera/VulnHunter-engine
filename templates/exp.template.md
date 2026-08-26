@@ -1,8 +1,8 @@
 ---
 round: 0
-id: EXP-R0-E0
+id: EXP-E0
 status: pending
-target: findings/BUG-R0-C0-A0-H0/report.yaml
+target: findings/BUG-C0-A0-H0/report.yaml
 ---
 
 

@@ -35,7 +35,7 @@ extensions:
 
 ## 完成处理
 
-退出前把当前 `todo/onboard-*.md` 的 `status` 修改为 `done`，并移动到 `done/`。
+退出前把当前 `todo/ONBOARD-O*.md` 的 `status` 修改为 `done`，并移动到 `done/`。
 
 # 备注
 

@@ -16,7 +16,7 @@ properties:
     minimum: 0
   id:
     type: string
-    pattern: "^LEAD-R\\d+(-[A-Z]\\d+)+-L\\d+$"
+    pattern: "^LEAD-(R\\d+-)?([A-Z]\\d+-)*L\\d+$"
   type:
     type: string
     enum: [knowledge, threat-model, hunt]

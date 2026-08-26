@@ -16,7 +16,7 @@ properties:
     minimum: 0
   id:
     type: string
-    pattern: "^EXP-R\\d+-E\\d+$"
+    pattern: "^EXP-(R\\d+-)?E\\d+$"
   status:
     type: string
     enum: [pending, done, closed]

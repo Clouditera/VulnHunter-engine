@@ -1,6 +1,6 @@
 ---
 round: 0
-id: COG-R0-C0
+id: COG-C0
 status: pending
 ---
 

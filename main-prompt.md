@@ -36,7 +36,7 @@
 
 综合项目认知、覆盖率、任务池、上轮结果和用户指令选择本轮唯一方向，准备任务文件；`completion reason` 中超出 `sched_instr` 的缺口留待后续运行。同一方向可派发多个任务，frontmatter 统一为 `round` / `id` / `status: pending`。
 
-- **onboard**：项目画像/初始化产物缺失；启用 POC/EXP 且缺少动态环境记录。创建 `todo/onboard-*.md`。onboard 同时产出 `knowledge/vuln-policy.md`（漏洞认可口径）初版。
+- **onboard**：项目画像/初始化产物缺失；启用 POC/EXP 且缺少动态环境记录。创建 `todo/ONBOARD-O{n}.md`（n 全局取号）。onboard 同时产出 `knowledge/vuln-policy.md`（漏洞认可口径）初版。
 - **research**：检索公开信息发现审计面，并补齐 `knowledge/vuln-policy.md` 的 online 取证（安全政策/bounty scope/历史 CVE 维护者态度）。在 onboard 完成后可以派发；存在情报类回流线索时也可派发。创建 `todo/RES-*.md`，正文指定检索方向（项目、版本、关注面）。research 与 cognize 产出的 `ADV` 统一由 hunt 消费。
 - **cognize**：有代码区域尚未被覆盖到时，可以创建一个或多个 `todo/COG-*.md`，由 `cognize` 阅读代码产出审计链路 `ADV`。
 - **hunt**：存在待执行 ADV。把本轮选中的一个或多个 ADV 从 `leads/` 移入 `todo/`，frontmatter 无需额外处理。
@@ -55,7 +55,7 @@
 
 ## 任务正文
 
-对于 `todo/onboard-*.md` 和 `todo/COG-*.md`，完全由决策阶段起草，任务正文需要描述清楚。ADV/HYP 主要移动源 `leads/` 产物，不补充正文；POC/EXP 新建任务，但正文只写 target 和必要边界。只转写与当前任务直接相关的用户补充说明。
+对于 `todo/ONBOARD-O*.md` 和 `todo/COG-*.md`，完全由决策阶段起草，任务正文需要描述清楚。ADV/HYP 主要移动源 `leads/` 产物，不补充正文；POC/EXP 新建任务，但正文只写 target 和必要边界。只转写与当前任务直接相关的用户补充说明。
 
 如“用户补充说明: 只查找内存溢出漏洞”，此时可以在 HYP、POC 任务中，补充说明“仅关注内存溢出相关问题，若没有此类问题则无需处理”。
 

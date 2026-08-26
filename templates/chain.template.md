@@ -1,10 +1,10 @@
 ---
 round: 0
-id: CHAIN-R0-X0
+id: CHAIN-X0
 status: pending
 members:
-  - findings/BUG-R0-C0-A0-H0/report.yaml
-  - findings/BUG-R0-C0-A0-H1/report.yaml
+  - findings/BUG-C0-A0-H0/report.yaml
+  - findings/BUG-C0-A0-H1/report.yaml
 ---
 
 

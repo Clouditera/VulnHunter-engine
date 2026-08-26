@@ -1,6 +1,6 @@
 ---
 round: 0
-id: LEAD-R0-C0-L0
+id: LEAD-C0-L0
 type: knowledge      # knowledge | threat-model | hunt
 status: pending
 ---

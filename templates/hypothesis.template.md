@@ -1,6 +1,6 @@
 ---
 round: 0
-id: HYP-R0-C0-A0-H0
+id: HYP-C0-A0-H0
 status: pending
 hyp_status: pending
 ---
