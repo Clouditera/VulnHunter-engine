@@ -1,5 +1,5 @@
 # Bug Report Schema — VulnForge
-# 单条漏洞报告，作为 findings/<BUG-id>/report.yaml。四段式：metadata（索引 + 评分）/ description（业务背景 + 漏洞情况 + 攻击）/ code（数据流 + 修复补丁）/ references。
+# 单条漏洞报告，作为 findings/<BUG-id>/report.yaml。四段式：metadata（索引 + 评分）/ description（概览 + 业务背景）/ code（触发步骤 + 复现配方 + 修复补丁）/ references。
 $schema: http://json-schema.org/draft-07/schema#
 $id: bug-report.schema.yaml
 title: Bug Report
@@ -23,11 +23,10 @@ properties:
       - ev_score
       - ev_priority
       - poc_status
-      - anchors
     properties:
       title:
         type: string
-        description: 三段式标题——功能组件/模块(带具体位置) + 漏洞类型 + 导致结果
+        description: 一句话标题——受影响功能(按业务职责称呼) + 漏洞类型 + 后果；各段一个惯用词，让没读过代码的人也认得
       vuln_type:
         type: string
         description: 漏洞类型简写（见 bug-report skill 枚举表）
@@ -63,17 +62,6 @@ properties:
       ev_rationale:
         type: string
         description: EV 各维度判断依据（逐维度说明）
-      policy_check:
-        type: object
-        description: 漏洞认可口径核验（verify 阶段写入）：维护者视角取证结论。out-of-scope/mitigated/by-design/contested 时 finding_class 应为 risk
-        properties:
-          verdict:
-            type: string
-            enum: [upheld, out-of-scope, mitigated, by-design, contested]
-          evidence:
-            type: string
-            description: 排除性 artifact 引用（口径条目/文件:行号/文档章节/issue URL）；upheld 时写已核验资料范围
-        required: [verdict, evidence]
       poc_status:
         type: string
         enum:
@@ -96,46 +84,20 @@ properties:
       affected_versions:
         type: string
         description: 已确认或合理推断的受影响版本范围；未知时写 unknown
-      anchors:
-        type: array
-        minItems: 1
-        description: 漏洞相关代码位置列表
-        items:
-          type: object
-          required:
-            - file_path
-            - line
-          properties:
-            file_path:
-              type: string
-              description: 文件路径（相对项目根）
-            line:
-              type: integer
-              minimum: 1
-            function:
-              type: string
-              description: 函数名（如适用）
-          additionalProperties: false
     additionalProperties: false
 
   description:
     type: object
     required:
+      - summary
       - background
-      - detailed_description
     properties:
+      summary:
+        type: string
+        description: 漏洞概览,一段读懂:缺陷在哪(file:line)、怎样被触发(注入类为受控输入经某路径到达触发点,其他类为某顺序/状态/配置下成立)、造成什么后果、前提是否易满足;逐步展开交给 dataflow,不重复 metadata 标签
       background:
         type: string
-        description: 先快速介绍目标项目，再略详介绍出问题的功能模块及其实际业务功能，帮助评审者理解上下文
-      detailed_description:
-        type: string
-        description: 漏洞的详细流程与成因
-      attack_payload_description:
-        type: string
-        description: 触发漏洞的 payload 大致情况
-      attack_description:
-        type: string
-        description: 攻击者在实际业务场景下如何触发漏洞
+        description: 给不熟悉该项目的读者做定位：说清项目是什么、出问题的模块负责什么、以及跟这个漏洞相关的输入或数据（按类型可能是外部输入、敏感数据或某个认证/配置前提）；停在缺陷本身之前，不写机制与严重性（归 dataflow/flaw、summary、评分）。
     additionalProperties: false
 
   code:
@@ -146,12 +108,13 @@ properties:
       dataflow:
         type: array
         minItems: 1
-        description: 一步步描述漏洞触发的代码流程
+        description: 一步步走到触发点的关键代码步骤（有污点流时即数据流）
         items:
           type: object
           required:
             - step
             - location
+            - snippet
             - description
           properties:
             step:
@@ -160,9 +123,53 @@ properties:
             location:
               type: string
               description: file:line（关键代码锚点）
+            function:
+              type: string
+              description: 所在函数/路由名（如适用）
+            role:
+              type: string
+              enum:
+                - source
+                - propagation
+                - sink
+              description: 污点走向(污点类适用):source=污点源；propagation=传播；sink=危险点。时序/状态/配置等无清晰污点流的漏洞可留空
+            snippet:
+              type: string
+              description: 该 location 处的真实代码原文（逐字复制，非转述）
             description:
               type: string
+              description: 讲清这一步数据发生了什么——如何进入 / 怎样传播或被解析 / 在 sink 处被如何(不当)使用
+            flaw:
+              type: string
+              description: 可选，点出根因那一步为何是缺陷——一句话说清此处为何不安全(有 sink 时通常即 sink 步)
           additionalProperties: false
+      reproduction:
+        type: object
+        description: 可选整块——复现配方，让复现者能直接照做
+        properties:
+          medium:
+            type: string
+            description: 复现介质，如 http_request / cli / script
+          preconditions:
+            type: array
+            description: 触发前必须先满足的条件
+            items:
+              type: string
+          request:
+            type: string
+            description: 完整可复制的请求或命令（含必要的 header/cookie/body）
+          payload_variants:
+            type: array
+            description: payload 变体列表
+            items:
+              type: string
+          success_condition:
+            type: string
+            description: 明确的成功判据——观察到什么现象即证明触发成功
+          notes:
+            type: string
+            description: 补充（平台差异、注意事项、仅在授权环境操作等）
+        additionalProperties: false
       fix_patch:
         type: string
         pattern: "^(?:$|diff --git a/)"
