@@ -1,5 +1,7 @@
 {
   "name": "vulnhunter-runner",
   "private": true,
-  "dependencies": {}
+  "dependencies": {
+    "yaml": "^2.9.0"
+  }
 }
