@@ -71,7 +71,7 @@ scan 启动
 
 | 池 | 节点 | 并发 | 消费 | 产出 |
 |---|---|---|---|---|
-| A | cognize | 1（串行） | 自行识别 scope 覆盖缺口 | ADV（C 线） |
+| A | cognize | 1（串行） | 节点内自查 scope 覆盖缺口（coverage 工具） | ADV（C 线） |
 | B | hunt | H | leads/ADV-* | HYP、回流 LEAD |
 | C | verify | V | leads/HYP-* | finding（或空=refuted） |
 | D | poc-verify→ev-assess / exp-build | 沙箱数 | poc_status=pending 的 finding | 复现/评估/组合产物 |
@@ -88,9 +88,9 @@ scan 启动
 
 ### 3.4 终止与门禁
 
-四池排空 + A 停工（scope 内区域均已有 ADV）→ coverage 门禁：scope.yaml 行覆盖率 ≥ 阈值 → 收尾；不足且预算未尽 → cognize 补轮；预算尽 → 如实输出缺口清单。无 nag、无 report 验收阶段。
+四池排空 + A 停工 → coverage 门禁：scope.yaml 行覆盖率 ≥ 阈值 → 收尾；不足且预算未尽 → cognize 补轮；预算尽 → 如实输出缺口清单。无 nag、无 report 验收阶段。
 
-**覆盖率口径**：仅 hunt 节点的精读计入覆盖率；cognize 的泛读（识别缺口、建立认知）不计入。
+**覆盖率口径**：覆盖率=审计覆盖率，即代码是否被 hunt 精读，仅 hunt 计入。cognize 是粗读——识别缺口、理解代码情况、切出合理审计链路（语义上=明确的功能点/数据流；量化≈百行至千行），其阅读不计入。
 
 ## 4. 产物函数层（8 个，详见 runner-design.md §4）
 
