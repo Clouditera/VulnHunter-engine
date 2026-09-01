@@ -37,19 +37,37 @@
 - frontmatter 退役：节点配置（tools/skills/函数/扩展/超时）进代码 `extensions/runner/nodes.ts`（NodeSpec 类型，tsc 保证）；
 - agents/*.md 只写：身份、目标、工作方式、产出要求、方法论备注。
 
-### 2.3 任务正文（user message，workflow 代码生成）
+### 2.3 任务正文（user prompt，workflow 机器组装）
 
-每个节点会话的 user message 由 workflow 现场组装，极简：
+统一结构（固定模板，项目无关；槽位只填机械值）：
 
-| 节点 | 任务正文要点 |
-|---|---|
-| onboard | 目标根、是否启用动态 |
-| research | 检索方向（项目/版本/关注面）或回流 LEAD 内容 |
-| cognize | 目标区域（coverage 缺口）+ 边界 |
-| hunt | 执行的 ADV 文件路径 |
-| verify | 研判的 HYP 文件路径 |
-| poc-verify / ev-assess | 目标 finding 编号 |
-| exp-build | 组合方向 + 候选 finding 清单 |
+```
+当前审计任务情况说明：
+沙箱连接配置：{sandbox_cfg}
+漏洞关注方向：{vuln_focus}
+输出语言：{output_lang}
+
+接下来开始执行 <节点名> 任务，<一句任务说明>。
+[todo 路径行——仅消费 todo 的节点]
+```
+
+填充规则：
+- 头部三行是 scan 启动参数的机械转写；值不存在则该行省略，全部缺失时头部块整个省略；
+- 消费 todo 的节点（hunt/verify/poc-verify/ev-assess）末尾附目标路径行；
+- 语义性内容（如"组合方向"）不由 workflow 生成——exp-build 等节点自行读工作区决定。
+
+8 节点模板：
+
+| 节点 | 任务说明句 | 附加行 |
+|---|---|---|
+| onboard | 初始化整个审计任务 | — |
+| research | 检索公开信息、补齐漏洞认可口径 | — |
+| cognize | 从覆盖缺口自选一个切面建立认知、产出审计链路 | — |
+| hunt | 沿审计链路精读并提出风险假设 | `审计链路：todo/ADV-*.md` |
+| verify | 研判风险假设的成立性 | `风险假设：todo/HYP-*.md` |
+| poc-verify | 在沙箱中复现 finding | `目标 finding：findings/BUG-*/report.yaml` |
+| ev-assess | 评估 finding 在真实业务场景下的影响 | `目标 finding：findings/BUG-*/report.yaml` |
+| exp-build | 探索并构造漏洞组合 | — |
 
 ### 2.4 skills
 
