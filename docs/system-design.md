@@ -97,6 +97,14 @@ scan 启动
 - 全局信号量 max_concurrent（默认 5）；槽位分配 work-conserving + 下游优先（verify > D池 > hunt > cognize）+ 老化防饿死；
 - research 产出 ADV-S 线直接进池 B 队列；回流 LEAD 按 type 机械路由（research→追加 research / hunt→转 ADV / threat-model→wiki）。
 
+### 3.2.1 research 定位（09-01 fish 裁定）
+
+**代码文件之外的情报官**——通过非代码内容找到对审计有价值的信息：
+- 信息源：在线资料（CVE/GHSA/公告/issue/PR/writeup）+ **git 信息**（版本考古、安全修复史、回退记录、变更热点）；
+- 产物：情报档案（knowledge/research/）、ADV（S 线）、vuln-policy.md 增量、wiki 更新、LEAD；
+- **允许零产出**：网络不可达、git 信息缺失、模型记忆不明确时不强求（零产出≠失败，run-state 照样标完成）；
+- 审计目标一律全量克隆（浅克隆无 git 史可用）。
+
 ### 3.3 队列与状态
 
 - 队列即目录：leads/（待消费）→ todo/（消费中）→ done/（完成），workflow 代码机械搬运；
