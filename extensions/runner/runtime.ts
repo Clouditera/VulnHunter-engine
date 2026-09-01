@@ -2,8 +2,8 @@
  * Runner 运行时：节点会话与 workflow 原语（M2 版）。
  *
  * 节点 = 进程内 SDK 会话（createAgentSession）：
- *   systemPrompt  = agents/<name>.md（任务书，纯散文）
- *   appendSystemPrompt = AGENTS.md（共享基底）
+ *   systemPrompt  = pi 内置默认（保留）
+ *   appendSystemPrompt = AGENTS.md（第一层）+ tasks/<name>.md（第二层）
  *   tools         = NodeSpec.tools 白名单
  *   customTools   = NodeSpec.fns 经 makeNodeTools 注入（线别/继承链由 binding 绑死）
  *   extensions    = NodeSpec.extensions（其余一律不挂）
@@ -53,9 +53,9 @@ export interface Workflow {
 
 export function defineWorkflow(w: Workflow): Workflow { return w; }
 
-/** 读 agents/<name>.md 正文（兼容残留 frontmatter，剥掉） */
+/** 读 tasks/<name>.md 正文（兼容残留 frontmatter，剥掉） */
 function loadTaskBook(engineDir: string, name: string): string {
-  const raw = readFileSync(join(engineDir, "agents", `${name}.md`), "utf-8");
+  const raw = readFileSync(join(engineDir, "tasks", `${name}.md`), "utf-8");
   return parseFrontmatter<Record<string, unknown>>(raw).body.trim();
 }
 
@@ -66,12 +66,13 @@ export async function runNode(ctx: WorkflowContext, agentName: string, opts: Nod
   const taskBook = loadTaskBook(ctx.engineDir, agentName);
   const agentsBase = readFileSync(join(ctx.engineDir, "AGENTS.md"), "utf-8");
 
+  // system prompt 组装（fish 09-01 裁定）：保留 pi 内置默认，
+  // append 第一层 AGENTS.md（系统通用规矩），第二层 tasks/<name>.md（节点任务书）
   const resourceLoader = new DefaultResourceLoader({
     cwd: ctx.cwd,
     agentDir: ctx.engineDir,
     settingsManager: SettingsManager.create(ctx.cwd, ctx.engineDir),
-    systemPrompt: taskBook,
-    appendSystemPrompt: [agentsBase],
+    appendSystemPrompt: [agentsBase, taskBook],
     noExtensions: true,   // 白名单制：只挂 NodeSpec 声明的扩展
     additionalExtensionPaths: (spec.extensions ?? []).map((n) => join(ctx.engineDir, "extensions", n)),
     skillsOverride: spec.skills
@@ -87,7 +88,9 @@ export async function runNode(ctx: WorkflowContext, agentName: string, opts: Nod
     cwd: ctx.cwd,
     agentDir: ctx.engineDir,
     resourceLoader,
-    tools: spec.tools,
+    // tools 白名单对 customTools 同样生效（SDK isAllowedTool 不区分来源）：
+    // 节点声明白名单时函数名必须并入；缺省时用 SDK 默认集（read/bash/edit/write+自定义/扩展工具）
+    ...(spec.tools ? { tools: [...spec.tools, ...customTools.map((t) => t.name)] } : {}),
     customTools,
   });
 
@@ -104,8 +107,8 @@ export async function runNode(ctx: WorkflowContext, agentName: string, opts: Nod
   });
 
   const timeout = opts.timeoutMs ?? spec.timeoutMs;
-  const timer = setTimeout(() => { void sess.abort?.(); }, timeout);
   let aborted = false;
+  const timer = setTimeout(() => { aborted = true; void sess.abort?.(); }, timeout);
   try {
     await sess.prompt(opts.task);
     await sess.waitForIdle();

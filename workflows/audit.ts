@@ -6,8 +6,22 @@
 
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { defineWorkflow } from "../extensions/runner/runtime.ts";
+import { defineWorkflow, type WorkflowContext } from "../extensions/runner/runtime.ts";
 import { loadState, saveState, readSandboxState } from "../extensions/runner/state.ts";
+
+/** 定稿 user prompt 模板（fish 09-01）：头部=scan 参数机械转写（缺省省略），后接任务句 */
+function uprompt(ctx: WorkflowContext, taskLine: string, extra?: string): string {
+  const head = [
+    ctx.params.sandbox_cfg ? `沙箱连接配置：${ctx.params.sandbox_cfg}` : "",
+    ctx.params.vuln_focus ? `漏洞关注方向：${ctx.params.vuln_focus}` : "",
+    ctx.params.output_lang ? `输出语言：${ctx.params.output_lang}` : "输出语言：zh-CN",
+  ].filter(Boolean);
+  const parts = [];
+  if (head.length) parts.push("当前审计任务情况说明：\n" + head.join("\n"));
+  parts.push(`接下来开始执行 ${taskLine}${extra ? "\n" + extra : ""}`);
+  return parts.join("\n\n");
+}
+
 
 export default defineWorkflow({
   name: "audit",
@@ -20,13 +34,7 @@ export default defineWorkflow({
     if (!st.onboard_done) {
       ctx.report("Phase 0: onboard 启动");
       const r = await ctx.node("onboard", {
-        task: [
-          `目标项目根：${ctx.cwd}`,
-          dynamic
-            ? `已启用动态验证，沙箱配置：${ctx.params.sandbox_cfg}。请实际验证沙箱内构建可用性并 update_build_state。`
-            : "未启用动态验证。update_build_state 记录 status: unavailable 并说明（未配置沙箱）。",
-          ctx.params.vuln_focus ? `漏洞关注方向：${ctx.params.vuln_focus}` : "",
-        ].filter(Boolean).join("\n"),
+        task: uprompt(ctx, "onboard 任务，初始化整个审计任务。"),
       });
       ctx.report(`onboard 结束${r.aborted ? "（异常中止）" : ""}`);
       if (r.aborted) { ctx.report("onboard 未完成，本次运行中止"); return; }
@@ -53,11 +61,7 @@ export default defineWorkflow({
       saveState(ctx.workdir, st);
       const r = await ctx.node("research", {
         binding: { runNo: st.counters.research_run },
-        task: [
-          `检索方向：项目 ${ctx.cwd}（版本以仓库状态为准）。`,
-          ctx.params.vuln_focus ? `关注面：${ctx.params.vuln_focus}` : "",
-          "已有 knowledge/research/ 档案时先读档案，增量检索。",
-        ].filter(Boolean).join("\n"),
+        task: uprompt(ctx, "research 任务，检索公开信息与 git 信息、补齐漏洞认可口径。"),
       });
       ctx.report(`research 结束${r.aborted ? "（异常中止）" : ""}`);
       st.research_done = true;
