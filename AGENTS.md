@@ -26,8 +26,8 @@
 
 - 被测目标的构建、运行等一切动态操作只在沙箱内执行；本地仅做静态动作（读代码、写分析文档）。
 - 沙箱工具链不满足时在沙箱内补齐；仍不满足的把 blocked 与原因记入 `knowledge/build/build.md`，不回落本地。
-- 动态操作前先确认沙箱可达（短重试不超过 3 次）；确认不可达时更新 `knowledge/build/build.md` 的 frontmatter，当前任务标记 blocked（reason: sandbox-unreachable）并退出，不再重试。
-- `knowledge/build/build.md` 用 frontmatter 记录沙箱状态，是单一记录点：`sandbox: available | unreachable`，`updated: <ISO 时间>`。
+- 动态操作前先确认沙箱可达（短重试不超过 3 次）；确认不可达时调 `update_build_state` 记为 unavailable，当前任务标记 blocked（reason: sandbox-unreachable）并退出，不再重试。
+- `knowledge/build/build.md` 记录沙箱状态，是单一记录点：`sandbox: available | unreachable`，`updated: <ISO 时间>`。
 
 # 审计方法
 
@@ -48,7 +48,7 @@
 
 ## 策略
 
-你通过`决策（decide）`选择下一轮的执行方向，在每种决策下你将完成不同的目标：
+审计由系统按下列方向调度，每个方向对应一类目标：
 
 | 方向 | 目标 |
 |---|---|
@@ -60,26 +60,10 @@
 | `poc-verify` | 对静态确认的候选做动态复现 |
 | `ev-assess` | 单漏洞：评估真实业务场景和最大影响；达不到时降级报告 |
 | `exp-build` | 组合漏洞：探索并构造破坏力最大的漏洞组合，产物写入 exploits/，经验写入 knowledge/exploits/ |
-| `report` | 汇总认知、发现与结论，退出审计 |
-| `exit` | 环境错误阻断时退出 |
 
 ## 任务与线索流转
 
-工作区使用三个同级目录组织任务和线索：
-
-- `todo/`：待执行任务。执行节点从这里读取并处理任务。
-- `leads/`：跨阶段信号。`leads/ADV-*.md`、`leads/HYP-*.md` 是待 `decide` 选择的审计链路和风险假设；`leads/LEAD-*.md` 是其它阶段交回 `decide` 的回流线索。
-- `done/`：已处理完成的任务和线索文件。
-
-所有任务和线索文件都是 Markdown 文件，frontmatter 统一包含三个基础字段：`round`、`id`、`status`。`status` 表示处理生命周期：
-
-- `pending`：待处理。
-- `done`：已由执行节点正常消费。
-- `closed`：被 `decide` 判断为重复、低价值、不符合用户需求或存在问题而关闭。
-
-HYP 文件额外包含 `hyp_status` 字段，描述风险假设的研判状态：`pending | confirmed | refuted`。HYP 的生命周期在 `verify` 结束后结束，确认的 HYP 会转化为 finding。
-
-`decide` 通过派发行为本身路由（无 decision 文件），并把本轮要执行的任务写入 `todo/`；执行节点从 `todo/` 读取任务，完成后把 `status` 更新为 `done` 并移动到 `done/`。
+任务与线索文件由系统统一管理，状态与流转（待处理 → 处理中 → 完成）由系统维护。节点按任务正文读取本次对象；结构化产物经函数（`emit_*` / `update_*`）落盘，散文产物用 write/edit 写入。
 
 # 工作区
 
@@ -90,13 +74,13 @@ HYP 文件额外包含 `hyp_status` 字段，描述风险假设的研判状态�
 - `knowledge/profiler.yaml`：项目基础画像（onboard 产出）。
 - `knowledge/wiki/index.md`：知识库目录。
 - `knowledge/wiki/overview.md`：项目快速认知（onboard 产出）。
-- `knowledge/wiki/threat-model.md`：威胁模型，是安全判断的基准（onboard 初始化、decide 合并回流线索时维护）。
+- `knowledge/wiki/threat-model.md`：威胁模型，是安全判断的基准（onboard 初始化，后续由系统维护）。
 - `knowledge/vuln-policy.md`：**漏洞认可口径**——该项目中什么样的漏洞会被维护者认可：认可面、排除条款、文档化缓解、by-design 声明，每条带证据锚点（onboard 从本地资料出初版、research 补 online 取证、verify 研判时对照核验）。
 - `knowledge/wiki/<主题>.md`：各功能域、攻击面或基础设施认知（cognize 产出）。
 - `knowledge/worklog.md`：逐轮完成记录，帮助判断哪些方向已经做过、审计是否接近完成。
 - `knowledge/build/`：动态测试相关的环境配置和操作记录，核心说明是 `knowledge/build/build.md`。
 - `knowledge/research/`：情报档案（research 产出）——历史漏洞与修复、上游安全动态、缺陷模式等，辅助确定审计面。
-- `knowledge/exploits/`：组合 EXP 探索的成功与失败经验（exp-build 产出），供后续 decide 和 exp-build 复用。
+- `knowledge/exploits/`：组合 EXP 探索的成功与失败经验（exp-build 产出），供后续节点复用。
 
 其它流程产物包括：
 
@@ -105,7 +89,6 @@ HYP 文件额外包含 `hyp_status` 字段，描述风险假设的研判状态�
 - `done/`：已处理完成的任务和线索。
 - `findings/`：漏洞最终出口。按漏洞创建目录，每个目录下含 `report.yaml`；启用 POC 并复现后另含 `poc/`；启用 EXP 并评估后相关文件统一写入 `exp/`。
 - `exploits/`：组合 EXP 产物。每个组合一个目录 `exploits/EXP-<id>/`，含 `report.yaml`、组合利用脚本与验证日志，以及 `members/` 下成员 finding 结论文档副本。
-- `report/`：审计报告。
 
 ## findings 结构
 
@@ -119,21 +102,17 @@ findings/
     └── exp/
 ```
 
-`report.yaml` 用 `finding_class` 区分漏洞与风险，用 `poc_status` / `exp_status` 描述动态复现和 EXP 状态。字段取值以 schema 为准。
+`report.yaml` 用 `finding_class` 区分漏洞与风险，用 `poc_status` / `exp_status` 描述动态复现和 EXP 状态；字段经函数落盘，以函数参数为准。
 
 ## 产物类型
 
-- **中间过程产物**：`todo/`、`leads/`、`done/`、`decision.yaml`。它们记录流程状态、待办、线索、来源关系和执行意图，只用于审计流程内部推进。
-- **对外产物**：`knowledge/wiki/`、`findings/`、`exploits/`、`report/`，以及 POC 脚本、漏洞报告、复现说明、日志等交付材料。它们描述目标项目和确认结果，用于后续阅读、复查或交付。
+- **中间过程产物**：`todo/`、`leads/`、`done/`。它们记录流程状态、待办、线索、来源关系和执行意图，只用于审计流程内部推进。
+- **对外产物**：`knowledge/wiki/`、`findings/`、`exploits/`，以及 POC 脚本、漏洞报告、复现说明、日志等交付材料。它们描述目标项目和确认结果，用于后续阅读、复查或交付。
 
 ## 写入规则
 
 - **信息脱敏**：对外产物只写目标项目本身，不写宿主绝对路径（如 `/home/xxx/...`），**不写审计流程、待办、线索等中间过程概念**。对外路径使用相对路径、脚本自定位路径或占位符，例如 `<poc-dir>`、`<project-src>`；容器内约定路径可以写。
-- **保持可溯源编号**：沿链路继承编号：`COG-C{c}` → `ADV-C{c}-A{a}` → `HYP-C{c}-A{a}-H{h}` → `BUG-C{c}-A{a}-H{h}`；research 线为 `ADV-S{n}-A{a}`（S=RES 任务全局序号）。各段编号全局唯一：取号前扫描 `leads/`、`todo/`、`done/`、`findings/` 中同类型现有编号，取最大值 +1；decide 同轮派发多个同类任务时在任务文件中指定各自编号。
-- **用状态推进流程**：完成当前环节的工作后，按任务要求更新产物 frontmatter 的 `status`，让 `decide` 可以据此选择下一步。只更新自己环节的产物状态，不越界改其它环节产物的状态。
-- **超出当前边界的信息写成回流线索**：发现新的知识空白、威胁模型修订点或值得继续追的线索时，按任务要求写成 `LEAD-*` 回流线索（`type: knowledge | threat-model | hunt`），交给 `decide` 处理。
+
+- **超出当前边界的信息写成回流线索**：发现新的知识空白、威胁模型修订点或值得继续追的线索时，调 `emit_lead` 落回流线索（`type: research | hunt | threat-model`），由系统路由处理。
 - **语言**：输出语言遵循当前提示词中的 `输出语言` 要求。
 
-# 参考材料
-
-产物 schema 与模板位于 agent dir（`$PI_CODING_AGENT_DIR`）：`schemas/` 为各产物字段与枚举约束，`templates/` 为产物模板。写产物前先读对应文件。
