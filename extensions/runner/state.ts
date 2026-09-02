@@ -15,6 +15,8 @@ export interface RunState {
   };
   /** 池 A 停工信号：连续零 ADV 产出的 cognize 轮数 */
   cognize_idle_rounds: number;
+  /** 已失败过一次的文件（再失败即 stalled 归档） */
+  stalled: string[];
 }
 
 export function loadState(workdir: string): RunState {
@@ -34,6 +36,7 @@ function defaultState(): RunState {
     research_done: false,
     counters: { cognize_run: 0, research_run: 0 },
     cognize_idle_rounds: 0,
+    stalled: [],
   };
 }
 

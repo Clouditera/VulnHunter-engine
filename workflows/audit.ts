@@ -1,13 +1,23 @@
 /**
- * audit：主审计 workflow（M2 范围：Phase 0 —— onboard → 动态门禁 → research）
+ * audit：主审计 workflow（M3：Phase 0 + 主循环三池）
  *
- * M3 接入主循环（cognize/hunt/verify 三池）；M4 接池 D 与 coverage 门禁。
+ * 调度规则（fish 09-02 裁定）：
+ *   - 派发即移 todo；异常结束退回 leads；
+ *   - 下游优先（verify > hunt > cognize），不设积压限速；
+ *   - cognize 串行（池 A=1）；hunt H=2、verify V=2；全局槽位 MAX=5；
+ *   - cognize 停工双信号：scope 覆盖达标（hunt 口径）或连续 2 轮零 ADV；
+ *   - LEAD 路由：research→追加 research 运行；hunt→机械转 ADV；
+ *   - 节点 API 三连断流（runtime 内）→ aborted → workflow 中止；
+ *   - 门禁：scope.yaml 阈值（mark_scope 设定）；无 scope 时门禁只看双信号。
+ * M4：池 D（poc→ev 链式）+ exp-build 收尾 + 预算。
  */
 
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { defineWorkflow, type WorkflowContext } from "../extensions/runner/runtime.ts";
+import { defineWorkflow, type WorkflowContext, type NodeResult } from "../extensions/runner/runtime.ts";
 import { loadState, saveState, readSandboxState } from "../extensions/runner/state.ts";
+import { pending, toTodo, toDone, backToLeads, pendingLeads, leadToAdv, markLeadDone } from "../extensions/runner/queue.ts";
+import { loadScope, loadCoverageMap, aggregateCoverageEvents, perScopeStats, getCoveragePaths } from "../extensions/code-coverage/coverage-core.ts";
 
 /** 定稿 user prompt 模板（fish 09-01）：头部=scan 参数机械转写（缺省省略），后接任务句 */
 function uprompt(ctx: WorkflowContext, taskLine: string, extra?: string): string {
@@ -22,54 +32,153 @@ function uprompt(ctx: WorkflowContext, taskLine: string, extra?: string): string
   return parts.join("\n\n");
 }
 
+const MAX = 5, H = 2, V = 2;
+
+type NodeOutcome = NodeResult & { file?: string; failed?: boolean };
+
+interface Running {
+  agent: string;
+  file?: string;          // 队列文件名（leads 内原始名）
+  promise: Promise<NodeOutcome>;
+}
+
+/** scope 覆盖门禁：全部条目不达标返回 false；无 scope 返回 null（不适用） */
+function coverageMet(ctx: WorkflowContext): boolean | null {
+  const scope = loadScope(ctx.workdir);
+  if (!scope) return null;
+  const cov = getCoveragePaths(ctx.workdir);
+  const map = loadCoverageMap(cov.jsonPath, ctx.cwd, ctx.workdir);
+  aggregateCoverageEvents(cov.jsonlPath, map);
+  return perScopeStats(map, scope).every((s) => s.pass);
+}
 
 export default defineWorkflow({
   name: "audit",
-  description: "审计主流程（M2：onboard/research 一次性阶段 + 动态门禁；主循环 M3 接入）",
+  description: "审计主流程（M3：Phase 0 + cognize/hunt/verify 三池主循环 + 覆盖门禁）",
   async run(ctx) {
     const st = loadState(ctx.workdir);
     const dynamic = !!ctx.params.sandbox_cfg;
 
-    // ---- onboard（一次性，幂等跳过）----
+    // ---- Phase 0：onboard（一次性）----
     if (!st.onboard_done) {
       ctx.report("Phase 0: onboard 启动");
-      const r = await ctx.node("onboard", {
-        task: uprompt(ctx, "onboard 任务，初始化整个审计任务。"),
-      });
-      ctx.report(`onboard 结束${r.aborted ? "（异常中止）" : ""}`);
-      if (r.aborted) { ctx.report("onboard 未完成，本次运行中止"); return; }
-      st.onboard_done = true;
-      saveState(ctx.workdir, st);
-    } else {
-      ctx.report("Phase 0: onboard 已完成（跳过）");
-    }
+      const r = await ctx.node("onboard", { task: uprompt(ctx, "onboard 任务，初始化整个审计任务。") });
+      if (r.aborted) { ctx.report("onboard 异常中止（API 不可用），workflow 退出"); return; }
+      st.onboard_done = true; saveState(ctx.workdir, st);
+      ctx.report("onboard 完成");
+    } else ctx.report("Phase 0: onboard 已完成（跳过）");
 
     // ---- 动态门禁 ----
-    if (dynamic) {
-      const sandbox = readSandboxState(ctx.workdir);
-      if (sandbox !== "available") {
-        ctx.report(`动态验证已启用但环境不可用（sandbox: ${sandbox}），workflow 退出。请检查沙箱后重跑。`);
-        return;
-      }
-      ctx.report("动态门禁通过（sandbox: available）");
+    if (dynamic && readSandboxState(ctx.workdir) !== "available") {
+      ctx.report("动态验证已启用但环境不可用，workflow 退出。请检查沙箱后重跑。");
+      return;
     }
 
-    // ---- research（一次性，幂等跳过）----
+    // ---- Phase 0：research（一次性）----
     if (!st.research_done) {
+      st.counters.research_run++; saveState(ctx.workdir, st);
       ctx.report("Phase 0: research 启动");
-      st.counters.research_run++;
-      saveState(ctx.workdir, st);
       const r = await ctx.node("research", {
         binding: { runNo: st.counters.research_run },
         task: uprompt(ctx, "research 任务，检索公开信息与 git 信息、补齐漏洞认可口径。"),
       });
-      ctx.report(`research 结束${r.aborted ? "（异常中止）" : ""}`);
-      st.research_done = true;
+      if (r.aborted) { ctx.report("research 异常中止（API 不可用），workflow 退出"); return; }
+      st.research_done = true; saveState(ctx.workdir, st);
+      ctx.report("research 完成");
+    } else ctx.report("Phase 0: research 已完成（跳过）");
+
+    // ---- 主循环（池 A/B/C）----
+    const running: Running[] = [];
+    let cognizeIdle = st.cognize_idle_rounds;
+    let cognizeStopped = coverageMet(ctx) === true;
+
+    const launch = (agent: string, task: string, binding: object, file?: string) => {
+      const promise: Promise<NodeOutcome> = ctx.node(agent, { task, binding })
+        .then((res) => ({ ...res, file }))
+        .catch((e) => ({ agent, output: String(e), aborted: false, failed: true, file }));
+      running.push({ agent, file, promise });
+      ctx.report(`派发 ${agent}${file ? `：${file}` : ""}`);
+    };
+
+    for (;;) {
+      // 1) LEAD 路由
+      for (const lead of pendingLeads(ctx.workdir)) {
+        if (lead.type === "research") {
+          st.counters.research_run++;
+          launch("research", uprompt(ctx, "research 任务，补充检索。回流线索已归档，请阅读其内容。"), { runNo: st.counters.research_run });
+          markLeadDone(ctx.workdir, lead.file);
+        } else {
+          const advId = leadToAdv(ctx.workdir, lead, ++st.counters.cognize_run);
+          ctx.report(`LEAD 转 ADV：${lead.file} → ${advId}`);
+        }
+      }
       saveState(ctx.workdir, st);
-    } else {
-      ctx.report("Phase 0: research 已完成（跳过）");
+
+      // 2) 下游优先派发
+      while (running.length < MAX) {
+        const hyps = pending(ctx.workdir, "HYP");
+        const advs = pending(ctx.workdir, "ADV");
+        if (hyps.length && running.filter((r) => r.agent === "verify").length < V) {
+          toTodo(ctx.workdir, hyps[0]);
+          launch("verify", uprompt(ctx, "verify 任务，研判风险假设的成立性。", `风险假设：todo/${hyps[0]}`), { hypId: hyps[0].replace(/\.md$/, "") }, hyps[0]);
+        } else if (advs.length && running.filter((r) => r.agent === "hunt").length < H) {
+          toTodo(ctx.workdir, advs[0]);
+          launch("hunt", uprompt(ctx, "hunt 任务，沿审计链路精读并提出风险假设。", `审计链路：todo/${advs[0]}`), { advId: advs[0].replace(/\.md$/, "") }, advs[0]);
+        } else if (!cognizeStopped && !running.some((r) => r.agent === "cognize")) {
+          st.counters.cognize_run++;
+          launch("cognize", uprompt(ctx, "cognize 任务，从覆盖缺口自选一个切面建立认知、产出审计链路。"), { runNo: st.counters.cognize_run });
+        } else break;
+      }
+      saveState(ctx.workdir, st);
+
+      // 3) 终止判定：无在跑 + 队列空 + cognize 停工
+      if (!running.length) {
+        if (!pending(ctx.workdir, "ADV").length && !pending(ctx.workdir, "HYP").length && cognizeStopped) break;
+        if (!pending(ctx.workdir, "ADV").length && !pending(ctx.workdir, "HYP").length && !cognizeStopped) {
+          // 队列空但 cognize 未停工：起一轮 cognize（上方 while 未进说明 MAX=0 的极端，防御）
+          continue;
+        }
+      }
+      if (!running.length) break;
+
+      // 4) 等任一完成
+      const done: NodeOutcome = await Promise.race(running.map((r) => r.promise));
+      const idx = running.findIndex((r) => r.file === done.file && r.agent === done.agent);
+      running.splice(idx, 1);
+      ctx.report(`${done.agent} 结束${done.aborted ? "（API 不可用中止）" : ""}`);
+
+      if (done.aborted) { ctx.report("API 不可用，workflow 中止。"); return; }
+
+      // 5) 善后
+      if (done.file) {
+        if (done.failed) {
+          if (st.stalled.includes(done.file)) { toDone(ctx.workdir, done.file); ctx.report(`${done.file} 重试仍失败，标记 stalled 归档`); }
+          else { st.stalled.push(done.file); backToLeads(ctx.workdir, done.file); ctx.report(`${done.file} 异常，退回 leads 待重试`); }
+        } else toDone(ctx.workdir, done.file);
+      }
+      if (done.agent === "cognize") {
+        // 零 ADV 产出判定：本轮 cognize_run 对应 ADV 数为 0 → idle++
+        const mine = pending(ctx.workdir, "ADV").filter((f) => f.startsWith(`ADV-C${st.counters.cognize_run}-`));
+        cognizeIdle = mine.length ? 0 : cognizeIdle + 1;
+        if (cognizeIdle >= 2) { cognizeStopped = true; ctx.report("cognize 连续 2 轮零产出，池 A 停工"); }
+      }
+      if (done.agent === "verify" && done.file) {
+        const hypId = done.file.replace(/\.md$/, "").replace(/^todo\//, "");
+        const bugDir = join(ctx.workdir, "findings", hypId.replace(/^HYP-/, "BUG-"));
+        ctx.report(`裁决：${hypId} → ${existsSync(bugDir) ? "confirmed（finding 已产出）" : "refuted（无 finding）"}`);
+      }
+      // 覆盖达标后 cognize 永久停工
+      if (!cognizeStopped && coverageMet(ctx) === true) { cognizeStopped = true; ctx.report("scope 覆盖达标，cognize 停工"); }
     }
 
-    ctx.report("Phase 0 完成（M2 范围）。主循环（cognize/hunt/verify/池D/门禁）M3-M4 接入。");
+    // ---- 门禁收尾 ----
+    const met = coverageMet(ctx);
+    const finds = existsSync(join(ctx.workdir, "findings")) ? readdir0(join(ctx.workdir, "findings")) : 0;
+    ctx.report(`主循环结束。findings: ${finds} 个；覆盖门禁：${met === null ? "无 scope，不适用" : met ? "达标" : "未达标（缺口详见 coverage 数据）"}`);
+    ctx.report("M3 范围结束。池 D 与 exp-build 收尾 M4 接入。");
   },
 });
+
+function readdir0(p: string): number {
+  try { return readdirSync(p).length; } catch { return 0; }
+}

@@ -18,6 +18,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { NODES, type NodeSpec } from "./nodes.ts";
 import { makeNodeTools, type FnBinding, type WsContext } from "./workspace-tools.ts";
+import { getCoveragePaths, loadCoverageMap, aggregateCoverageEvents, persistCoverageMap, recordReadCoverageEvent } from "../code-coverage/coverage-core.ts";
 
 export interface NodeOptions {
   /** 任务正文（user message） */
@@ -96,6 +97,8 @@ export async function runNode(ctx: WorkflowContext, agentName: string, opts: Nod
 
   let output = "";
   const sess: AgentSession = session;
+  // hunt 精读 = 审计覆盖率唯一统计口径（fish 08-31 裁定）：runner 直记，不经 env
+  const cov = agentName === "hunt" ? getCoveragePaths(ctx.workdir) : undefined;
   sess.subscribe((ev: AgentSessionEvent) => {
     if (ev.type === "message_end" && (ev as any).message?.role === "assistant") {
       const text = (ev as any).message.content
@@ -104,8 +107,10 @@ export async function runNode(ctx: WorkflowContext, agentName: string, opts: Nod
         .join("");
       if (text) output = text;
     }
+    if (cov && ev.type === "tool_execution_end" && (ev as any).toolName === "read" && !(ev as any).isError) {
+      recordReadCoverageEvent({ jsonlPath: cov.jsonlPath, targetRoot: ctx.cwd, stage: "hunt", input: (ev as any).args });
+    }
   });
-
   // fish 09-02 裁定：不设节点超时；pi 内部自带 API 重试（有上限），
   // 上限后注入恢复 prompt 继续——连续 3 次 pi 异常且恢复无效 = API 不可用，中止整个 workflow
   let aborted = false;
@@ -127,5 +132,9 @@ export async function runNode(ctx: WorkflowContext, agentName: string, opts: Nod
     }
   }
   // TODO M3: session shutdown/资源释放 API 确认后补上
+  if (cov) {
+    const map = loadCoverageMap(cov.jsonPath, ctx.cwd, ctx.workdir);
+    if (aggregateCoverageEvents(cov.jsonlPath, map)) persistCoverageMap(map, cov.jsonPath);
+  }
   return { agent: agentName, output, aborted };
 }
