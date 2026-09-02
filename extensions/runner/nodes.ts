@@ -14,53 +14,41 @@ export interface NodeSpec {
   extensions?: string[];
   /** 产物函数授权（精确到函数；线别在 FnKind 里） */
   fns: FnKind[];
-  /** 超时（ms） */
-  timeoutMs: number;
 }
-
-const T30 = 30 * 60_000;
 
 export const NODES: Record<string, NodeSpec> = {
   onboard: {
     skills: ["project-profiler", "threat-modeling", "wiki-maintainer"],
     fns: ["update_profiler", "update_build_state", "emit_lead"],
-    timeoutMs: T30,
   },
   research: {
     extensions: ["pi-web-access"],
     fns: ["emit_adv_s", "emit_lead"],
-    timeoutMs: T30,
   },
   cognize: {
     skills: ["wiki-maintainer"],
     extensions: ["code-coverage"],   // coverage 查询工具（记录侧由 hunt 独占）
     fns: ["emit_adv_c", "emit_lead"],
-    timeoutMs: T30,
   },
   hunt: {
     tools: ["read", "grep", "find", "ls"],
     fns: ["emit_hyp", "emit_lead"],
-    timeoutMs: T30,
   },
   verify: {
     tools: ["read", "grep", "find", "ls", "edit"],   // edit 用于往 HYP 正文追加研判
     skills: ["bug-report", "wiki-maintainer"],
     extensions: ["pi-web-access"],                    // 政策核验的在线查证
     fns: ["emit_finding", "emit_lead"],
-    timeoutMs: T30,
   },
   "poc-verify": {
     skills: ["bug-report"],
     fns: ["update_finding", "emit_lead"],
-    timeoutMs: 60 * 60_000,
   },
   "ev-assess": {
     skills: ["bug-report"],
     fns: ["update_finding", "emit_lead"],
-    timeoutMs: T30,
   },
   "exp-build": {
     fns: ["update_finding", "emit_lead"],
-    timeoutMs: 90 * 60_000,
   },
 };

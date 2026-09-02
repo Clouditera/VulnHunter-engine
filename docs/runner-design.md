@@ -47,6 +47,20 @@ runner 是 engine/core 的 pi 扩展，把审计流程从 decide 自由调度收
 6. 预算：节点数/时长/token 默认无上限，外部指定才生效；
 7. steer 注入：内外部 ADV 不区分，同队列同规则；
 8. research 不做"出洞后针对性检索"（暂不）。
+
+## 2.2 错误处理裁定（09-02 fish）
+
+- 不设节点超时（节点跑到自然结束）；
+- API 错误：pi 内部自带重试（有上限）；上限后 runner 注入恢复 prompt 继续会话；**连续 3 次 pi 异常且恢复无效 → 判定 API 不可用，中止整个 workflow**；
+- 会话异常结束：任务退回 leads（可重派）；
+- 零产出合法（cognize/research 尤其），不重试；
+- 沙箱不可达：不做额外处理（节点如实 blocked 即可）。
+
+## 2.3 LEAD 类型裁定（09-02 fish）
+
+LEAD type 只留两值：**research**（→追加 research）/ **hunt**（→转 ADV 回池 B）。
+threat-model 类型移除：知识/威胁模型的修订由节点**直接修改相关文件**（wiki/vuln-policy），不产生 LEAD。
+原则：一条 LEAD 必须有池消费者，没有消费者的类型就 redesign。
 - **终止**：A 停工 + 队列排空 + 无在跑节点 → coverage 门禁（scope.yaml 行覆盖率，hunt 口径）→ 达标收尾 / 预算尽输出缺口清单；
 - **池 A 停工双信号**：①量化——scope 覆盖率达标（缺口不存在）；②判断——cognize 连续 2 轮零 ADV 产出（无值得深挖的方向）。
 - **中断恢复**：run-state.json 记账（完成标记/队列快照/裁决/预算），重跑续跑。

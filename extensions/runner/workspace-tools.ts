@@ -120,7 +120,7 @@ function makeEmitLead(ws: WsContext): ToolDefinition {
     label: "Emit Lead",
     description: "产出一条回流线索（LEAD）：本节点无法闭环、需要后续跟进的问题。type 供工作流路由。",
     parameters: Type.Object({
-      type: Type.Union([Type.Literal("research"), Type.Literal("hunt"), Type.Literal("threat-model")], { description: "research=补充检索；hunt=转审计链路继续挖；threat-model=威胁模型/知识修订" }),
+      type: Type.Union([Type.Literal("research"), Type.Literal("hunt")], { description: "research=补充检索；hunt=转审计链路继续挖" }),
       body: Type.String({ description: "线索正文（自由 markdown，写明问题与锚点）" }),
     }),
     async execute(_id, params) {

@@ -106,17 +106,25 @@ export async function runNode(ctx: WorkflowContext, agentName: string, opts: Nod
     }
   });
 
-  const timeout = opts.timeoutMs ?? spec.timeoutMs;
+  // fish 09-02 裁定：不设节点超时；pi 内部自带 API 重试（有上限），
+  // 上限后注入恢复 prompt 继续——连续 3 次 pi 异常且恢复无效 = API 不可用，中止整个 workflow
   let aborted = false;
-  const timer = setTimeout(() => { aborted = true; void sess.abort?.(); }, timeout);
-  try {
-    await sess.prompt(opts.task);
-    await sess.waitForIdle();
-  } catch (e) {
-    aborted = true;
-    output += `\n[runner] 节点异常中止: ${String(e)}`;
-  } finally {
-    clearTimeout(timer);
+  let failures = 0;
+  let pending = opts.task;
+  for (;;) {
+    try {
+      await sess.prompt(pending);
+      await sess.waitForIdle();
+      break;
+    } catch (e) {
+      failures++;
+      if (failures >= 3) {
+        aborted = true;
+        output += `\n[runner] 连续 ${failures} 次 pi 异常且恢复失败，判定 API 不可用: ${String(e)}`;
+        break;
+      }
+      pending = "上一次执行因平台错误中断。请核对工作区现状，从未完成处继续。";
+    }
   }
   // TODO M3: session shutdown/资源释放 API 确认后补上
   return { agent: agentName, output, aborted };
