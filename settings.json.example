@@ -1,16 +1,14 @@
 {
-  // settings.json — pi 全局默认（JSONC，注释会被 strip）。
-  // defaultProvider/defaultModel 要与 models.json 里的 provider 名和模型 id 对应；
-  // subagents 块给子代理编排：defaultModel 兜底，agentOverrides 按阶段覆盖（动态阶段可用更强模型）。
-  "defaultProvider": "my-provider",
+  "_comment": "复制为 settings.json 使用。defaultProvider/defaultModel 指向 models.json 里已配的提供者与模型；subagents 为子代理模型覆盖（agentOverrides 按节点名钉强模型）。详见 README。",
+  "defaultProvider": "your-provider-id",
   "defaultModel": "your-model-id",
-  "defaultThinkingLevel": "high",
   "subagents": {
-    "defaultModel": "my-provider/your-model-id:high",
+    "defaultModel": "your-provider-id/your-model-id:max",
     "agentOverrides": {
-      "poc-verify": { "model": "my-provider/your-model-id:high" },
-      "ev-assess":  { "model": "my-provider/your-model-id:high" },
-      "exp-build":  { "model": "my-provider/your-model-id:high" }
+      "poc-verify": { "model": "your-provider-id/your-model-id:max" },
+      "ev-assess": { "model": "your-provider-id/your-model-id:max" },
+      "exp-build": { "model": "your-provider-id/your-model-id:max" }
     }
-  }
+  },
+  "theme": "dark"
 }
