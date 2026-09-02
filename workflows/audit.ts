@@ -32,7 +32,10 @@ function uprompt(ctx: WorkflowContext, taskLine: string, extra?: string): string
   return parts.join("\n\n");
 }
 
-const MAX = 5, H = 2, V = 2;
+const MAX = 5;
+// hunt/verify 默认吃满全局并发（fish 09-02 裁定）：派发顺序 verify>hunt 保证下游优先，
+// 富余槽位自然归 hunt；cognize/research 各限 1（前者防 wiki 写冲突，后者情报合批）。
+const H = MAX, V = MAX;
 
 type NodeOutcome = NodeResult & { file?: string; failed?: boolean };
 
