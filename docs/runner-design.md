@@ -36,6 +36,17 @@ runner 是 engine/core 的 pi 扩展，把审计流程从 decide 自由调度收
 - **动态门禁**：scan 参数含 sandbox_cfg 而 build 状态 unavailable → 退出 workflow；
 - **槽位分配**：work-conserving + 下游优先（verify > poc/exp > hunt > cognize）+ 老化防饿死（等待超阈值提级）+ 池内硬上限（cognize 恒 1 防 wiki 写冲突、D 池恒=沙箱数）；
 - **无死锁**：节点超时必终止 + 槽位释放即重派 + 老化保底；
+
+## 2.1 调度细节裁定（09-02 fish）
+
+1. 队列流转：派发即移 todo；会话异常结束退回 leads（可重派）；
+2. 池间策略：下游优先，不设积压限速；
+3. 池 D：有待处理 finding 优先调度 D；poc-verify→ev-assess 同 finding 链式连跑（占沙箱不放）；
+4. exp-build：其余节点全部执行完毕后才启动；连续无新 exploits 产出即停；
+5. 门禁阈值：mark_scope 时设定（scope.yaml 携带阈值）；
+6. 预算：节点数/时长/token 默认无上限，外部指定才生效；
+7. steer 注入：内外部 ADV 不区分，同队列同规则；
+8. research 不做"出洞后针对性检索"（暂不）。
 - **终止**：A 停工 + 队列排空 + 无在跑节点 → coverage 门禁（scope.yaml 行覆盖率，hunt 口径）→ 达标收尾 / 预算尽输出缺口清单；
 - **池 A 停工双信号**：①量化——scope 覆盖率达标（缺口不存在）；②判断——cognize 连续 2 轮零 ADV 产出（无值得深挖的方向）。
 - **中断恢复**：run-state.json 记账（完成标记/队列快照/裁决/预算），重跑续跑。
