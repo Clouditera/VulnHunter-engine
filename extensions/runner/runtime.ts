@@ -22,8 +22,10 @@ import { monitorState } from "./monitor-state.ts";
 import { getCoveragePaths, loadCoverageMap, aggregateCoverageEvents, persistCoverageMap, recordReadCoverageEvent } from "../code-coverage/coverage-core.ts";
 
 export interface NodeOptions {
-  /** 任务正文（user message） */
+  /** 任务说明句（"hunt 任务，沿审计链路精读并提出风险假设。"）——runNode 组装为「接下来开始执行 …」 */
   task: string;
+  /** 附加行（如 todo 路径："审计链路：todo/ADV-C1-A2.md"） */
+  extra?: string;
   /** 编号绑定上下文（hunt→advId / verify→hypId / cognize·research→runNo） */
   binding?: FnBinding;
   /** 覆盖默认超时 */
@@ -74,7 +76,7 @@ export async function runNode(ctx: WorkflowContext, agentName: string, opts: Nod
     cwd: ctx.cwd,
     agentDir: ctx.engineDir,
     settingsManager: SettingsManager.create(ctx.cwd, ctx.engineDir),
-    appendSystemPrompt: [agentsBase, taskBook],
+    appendSystemPrompt: [agentsBase],
     noExtensions: true,   // 白名单制：只挂 NodeSpec 声明的扩展
     additionalExtensionPaths: (spec.extensions ?? []).map((n) => join(ctx.engineDir, "extensions", n)),
     skillsOverride: spec.skills
@@ -119,8 +121,19 @@ export async function runNode(ctx: WorkflowContext, agentName: string, opts: Nod
   // fish 09-02 裁定：不设节点超时；pi 内部自带 API 重试（有上限），
   // 上限后注入恢复 prompt 继续——连续 3 次 pi 异常且恢复无效 = API 不可用，中止整个 workflow
   let aborted = false;
+  const head = [
+    ctx.params.sandbox_cfg ? `沙箱连接配置：${ctx.params.sandbox_cfg}` : "",
+    ctx.params.vuln_focus ? `漏洞关注方向：${ctx.params.vuln_focus}` : "",
+    ctx.params.output_lang ? `输出语言：${ctx.params.output_lang}` : "输出语言：zh-CN",
+  ].filter(Boolean);
+  const firstPrompt = [
+    head.length ? "当前审计任务情况说明：\n" + head.join("\n") : "",
+    taskBook,
+    `接下来开始执行 ${opts.task}${opts.extra ? "\n" + opts.extra : ""}`,
+  ].filter(Boolean).join("\n\n");
+
   let failures = 0;
-  let pending = opts.task;
+  let pending = firstPrompt;
   for (;;) {
     try {
       await sess.prompt(pending);

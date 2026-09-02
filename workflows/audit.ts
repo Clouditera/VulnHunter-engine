@@ -14,23 +14,10 @@
 
 import { existsSync, readdirSync, renameSync } from "node:fs";
 import { join } from "node:path";
-import { defineWorkflow, type WorkflowContext, type NodeResult } from "../extensions/runner/runtime.ts";
+import { defineWorkflow, type NodeResult, type WorkflowContext } from "../extensions/runner/runtime.ts";
 import { loadState, saveState, readSandboxState } from "../extensions/runner/state.ts";
 import { pending, toTodo, toDone, backToLeads, pendingLeads, leadToAdv, markLeadDone } from "../extensions/runner/queue.ts";
 import { loadScope, loadCoverageMap, aggregateCoverageEvents, perScopeStats, getCoveragePaths } from "../extensions/code-coverage/coverage-core.ts";
-
-/** 定稿 user prompt 模板（fish 09-01）：头部=scan 参数机械转写（缺省省略），后接任务句 */
-function uprompt(ctx: WorkflowContext, taskLine: string, extra?: string): string {
-  const head = [
-    ctx.params.sandbox_cfg ? `沙箱连接配置：${ctx.params.sandbox_cfg}` : "",
-    ctx.params.vuln_focus ? `漏洞关注方向：${ctx.params.vuln_focus}` : "",
-    ctx.params.output_lang ? `输出语言：${ctx.params.output_lang}` : "输出语言：zh-CN",
-  ].filter(Boolean);
-  const parts = [];
-  if (head.length) parts.push("当前审计任务情况说明：\n" + head.join("\n"));
-  parts.push(`接下来开始执行 ${taskLine}${extra ? "\n" + extra : ""}`);
-  return parts.join("\n\n");
-}
 
 const MAX = 5;
 // hunt/verify 默认吃满全局并发（fish 09-02 裁定）：派发顺序 verify>hunt 保证下游优先，
@@ -46,7 +33,7 @@ interface Running {
 }
 
 /** scope 覆盖门禁：全部条目不达标返回 false；无 scope 返回 null（不适用） */
-function coverageMet(ctx: WorkflowContext): boolean | null {
+function coverageMet(ctx: Parameters<typeof import("../extensions/runner/runtime.ts").defineWorkflow>[0] extends never ? never : import("../extensions/runner/runtime.ts").WorkflowContext): boolean | null {
   const scope = loadScope(ctx.workdir);
   if (!scope) return null;
   const cov = getCoveragePaths(ctx.workdir);
@@ -62,13 +49,14 @@ export default defineWorkflow({
     const st = loadState(ctx.workdir);
     const dynamic = !!ctx.params.sandbox_cfg;
     const dynamicOnly = ctx.params.mode === "dynamic";
+    const cognizeOnly = ctx.params.mode === "cognize";  // 只跑到池 A（验证 cognize 产出）
 
     if (dynamicOnly) ctx.report("mode=dynamic：跳过 Phase 0 与静态主循环，直接进池 D");
 
     // ---- Phase 0：onboard（一次性）----
     if (!dynamicOnly && !st.onboard_done) {
       ctx.report("Phase 0: onboard 启动");
-      const r = await ctx.node("onboard", { task: uprompt(ctx, "onboard 任务，初始化整个审计任务。") });
+      const r = await ctx.node("onboard", { task: "onboard 任务，初始化整个审计任务。" });
       if (r.aborted) { ctx.report("onboard 异常中止（API 不可用），workflow 退出"); return; }
       st.onboard_done = true; saveState(ctx.workdir, st);
       ctx.report("onboard 完成");
@@ -86,7 +74,7 @@ export default defineWorkflow({
       ctx.report("Phase 0: research 启动");
       const r = await ctx.node("research", {
         binding: { runNo: st.counters.research_run },
-        task: uprompt(ctx, "research 任务，检索公开信息与 git 信息、补齐漏洞认可口径。"),
+        task: "research 任务，检索公开信息与 git 信息、补齐漏洞认可口径。"
       });
       if (r.aborted) { ctx.report("research 异常中止（API 不可用），workflow 退出"); return; }
       st.research_done = true; saveState(ctx.workdir, st);
@@ -104,11 +92,15 @@ export default defineWorkflow({
     let cognizeIdle = st.cognize_idle_rounds;
     let cognizeStopped = coverageMet(ctx) === true;
 
-    const launch = (agent: string, task: string, binding: object, file?: string) => {
-      const promise: Promise<NodeOutcome> = ctx.node(agent, { task, binding })
+    const launch = (agent: string, task: string, extraOrBinding: object | string, bindingOrFile?: object | string, file?: string) => {
+      // 兼容两种形态：launch(agent, task, binding, file) 或 launch(agent, task, extra, binding)
+      let extra: string | undefined; let binding: object; let f = file;
+      if (typeof extraOrBinding === "string") { extra = extraOrBinding; binding = (bindingOrFile as object) ?? {}; }
+      else { binding = extraOrBinding; f = bindingOrFile as string | undefined; }
+      const promise: Promise<NodeOutcome> = ctx.node(agent, { task, extra, binding })
         .then((res) => ({ ...res, file }))
         .catch((e) => ({ agent, output: String(e), aborted: false, failed: true, file }));
-      running.push({ agent, file, promise });
+      running.push({ agent, file: f, promise });
       ctx.report(`派发 ${agent}${file ? `：${file}` : ""}`);
     };
 
@@ -129,28 +121,29 @@ export default defineWorkflow({
       while (running.length < MAX) {
         const hyps = pending(ctx.workdir, "HYP");
         const advs = pending(ctx.workdir, "ADV");
-        if (hyps.length && running.filter((r) => r.agent === "verify").length < V) {
+        if (!cognizeOnly && hyps.length && running.filter((r) => r.agent === "verify").length < V) {
           toTodo(ctx.workdir, hyps[0]);
-          launch("verify", uprompt(ctx, "verify 任务，研判风险假设的成立性。", `风险假设：todo/${hyps[0]}`), { hypId: hyps[0].replace(/\.md$/, "") }, hyps[0]);
+          launch("verify", "verify 任务，研判风险假设的成立性。", `风险假设：todo/${hyps[0]}`, { hypId: hyps[0].replace(/\.md$/, "") }, hyps[0]);
         } else if (researchPending && !running.some((r) => r.agent === "research")) {
           researchPending = false;
           st.counters.research_run++;
-          launch("research", uprompt(ctx, "research 任务，补充检索（有回流线索指向新的检索方向）。"), { runNo: st.counters.research_run });
-        } else if (advs.length && running.filter((r) => r.agent === "hunt").length < H) {
+          launch("research", "research 任务，补充检索（有回流线索指向新的检索方向）。", { runNo: st.counters.research_run });
+        } else if (!cognizeOnly && advs.length && running.filter((r) => r.agent === "hunt").length < H) {
           toTodo(ctx.workdir, advs[0]);
-          launch("hunt", uprompt(ctx, "hunt 任务，沿审计链路精读并提出风险假设。", `审计链路：todo/${advs[0]}`), { advId: advs[0].replace(/\.md$/, "") }, advs[0]);
+          launch("hunt", "hunt 任务，沿审计链路精读并提出风险假设。", `审计链路：todo/${advs[0]}`, { advId: advs[0].replace(/\.md$/, "") }, advs[0]);
         } else if (!cognizeStopped
                    && !pending(ctx.workdir, "ADV").length            // 有存量方向时不生产
                    && !running.some((r) => r.agent === "hunt")       // 有在途精读时不观察（消除分析冲突）
                    && !running.some((r) => r.agent === "cognize")) { // 串行
           st.counters.cognize_run++;
-          launch("cognize", uprompt(ctx, "cognize 任务，从覆盖缺口自选一个切面建立认知、产出审计链路。"), { runNo: st.counters.cognize_run });
+          launch("cognize", "cognize 任务，从覆盖缺口自选一个切面建立认知、产出审计链路。", { runNo: st.counters.cognize_run });
         } else break;
       }
       saveState(ctx.workdir, st);
 
       // 3) 终止判定：无在跑 + 队列空 + cognize 停工
       if (!running.length) {
+        if (cognizeOnly && cognizeStopped) break;
         // 队列空 + cognize 停工 → 主循环结束；否则上方 dispatch 必已补一轮 cognize
         if (!pending(ctx.workdir, "ADV").length && !pending(ctx.workdir, "HYP").length && cognizeStopped) break;
         if (!pending(ctx.workdir, "ADV").length && !pending(ctx.workdir, "HYP").length && !cognizeStopped) continue;
@@ -188,7 +181,7 @@ export default defineWorkflow({
     }
 
     // ---- 池 D：动态验证（poc-verify → ev-assess 同 finding 链式，并发=1 沙箱）----
-    if (dynamic) {
+    if (dynamic && !cognizeOnly) {
       ctx.report("静态阶段完成，进入动态验证（池 D）");
       for (;;) {
         const findingsDir = join(ctx.workdir, "findings");
@@ -205,7 +198,7 @@ export default defineWorkflow({
         if (!target) break;
         ctx.report(`池 D：poc-verify → ev-assess 链式，目标 ${target}`);
         const r1 = await ctx.node("poc-verify", {
-          task: uprompt(ctx, "poc-verify 任务，在沙箱中复现 finding。", `目标 finding：findings/${target}/report.yaml`),
+          task: "poc-verify 任务，在沙箱中复现 finding。", extra: `目标 finding：findings/${target}/report.yaml`,
         });
         if (r1.aborted) { ctx.report("API 不可用，workflow 中止。"); return; }
         // poc 成功才接 ev-assess（reproduced 才评估）
@@ -213,7 +206,7 @@ export default defineWorkflow({
         const txt = readFileSync(rp, "utf-8");
         if (/poc_status:\s*reproduced/.test(txt) && /exp_status:\s*pending/.test(txt)) {
           const r2 = await ctx.node("ev-assess", {
-            task: uprompt(ctx, "ev-assess 任务，评估 finding 在真实业务场景下的影响。", `目标 finding：findings/${target}/report.yaml`),
+            task: "ev-assess 任务，评估 finding 在真实业务场景下的影响。", extra: `目标 finding：findings/${target}/report.yaml`,
           });
           if (r2.aborted) { ctx.report("API 不可用，workflow 中止。"); return; }
         }
@@ -236,7 +229,7 @@ export default defineWorkflow({
         }
         if (evDone < 2) { ctx.report(`组合信号不足（已完成评估的 vulnerability：${evDone}），跳过 exp-build`); break; }
         ctx.report("exp-build 启动");
-        const r = await ctx.node("exp-build", { task: uprompt(ctx, "exp-build 任务，探索并构造漏洞组合。") });
+        const r = await ctx.node("exp-build", { task: "exp-build 任务，探索并构造漏洞组合。" });
         if (r.aborted) { ctx.report("API 不可用，workflow 中止。"); return; }
         const after = existsSync(exploitsDir) ? readdirSync(exploitsDir).filter((d) => d.startsWith("EXP-")).length : 0;
         if (after <= before) { ctx.report("exp-build 无新 exploits 产出，停止"); break; }
