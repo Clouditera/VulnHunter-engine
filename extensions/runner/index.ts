@@ -85,8 +85,8 @@ export default function (pi: ExtensionAPI) {
     },
   }));
 
-  // 监控台：Ctrl+O 呼出三 tab 弹窗（运行/节点详情/覆盖率）
-  pi.registerShortcut("ctrl+o", {
+  // 监控台：F9 呼出三 tab 弹窗（运行/节点详情/覆盖率）（ctrl+o 与内建冲突）
+  pi.registerShortcut("f9", {
     description: "VulnHunter 监控台",
     handler: async (ectx) => {
       await ectx.ui.custom<void>((tui, theme, _kb, done) => createMonitorComponent(tui, theme, join(process.cwd(), ".vulnforge"), () => done()), {

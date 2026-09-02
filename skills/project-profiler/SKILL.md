@@ -1,5 +1,5 @@
 ---
-name: Project Profiler
+name: project-profiler
 description: 项目画像技能 — 收集项目客观事实（代码统计、技术栈、项目结构），产出 profiler.yaml。
 ---
 

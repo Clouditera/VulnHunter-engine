@@ -4,8 +4,9 @@ set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [[ -f "$DIR/.env" ]]; then set -a; source "$DIR/.env"; set +a; fi
 export PI_CODING_AGENT_DIR="$DIR"
-# 新架构白名单挂载：runner（scan/监控台）+ code-coverage（coverage 查询）+ pi-web-access（联网）
-exec pi --no-extensions \
+# 主会话 system = pi 内置默认 + AGENTS.md（自动项目上下文）+ main-prompt.md（媒介职责，append）
+exec pi --append-system-prompt "$DIR/main-prompt.md" \
+  --no-extensions \
   --extension "$DIR/extensions/runner" \
   --extension "$DIR/extensions/code-coverage" \
   --extension "$DIR/extensions/pi-web-access" \
