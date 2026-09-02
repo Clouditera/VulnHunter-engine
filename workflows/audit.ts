@@ -61,9 +61,12 @@ export default defineWorkflow({
   async run(ctx) {
     const st = loadState(ctx.workdir);
     const dynamic = !!ctx.params.sandbox_cfg;
+    const dynamicOnly = ctx.params.mode === "dynamic";
+
+    if (dynamicOnly) ctx.report("mode=dynamic：跳过 Phase 0 与静态主循环，直接进池 D");
 
     // ---- Phase 0：onboard（一次性）----
-    if (!st.onboard_done) {
+    if (!dynamicOnly && !st.onboard_done) {
       ctx.report("Phase 0: onboard 启动");
       const r = await ctx.node("onboard", { task: uprompt(ctx, "onboard 任务，初始化整个审计任务。") });
       if (r.aborted) { ctx.report("onboard 异常中止（API 不可用），workflow 退出"); return; }
@@ -78,7 +81,7 @@ export default defineWorkflow({
     }
 
     // ---- Phase 0：research（一次性）----
-    if (!st.research_done) {
+    if (!dynamicOnly && !st.research_done) {
       st.counters.research_run++; saveState(ctx.workdir, st);
       ctx.report("Phase 0: research 启动");
       const r = await ctx.node("research", {
@@ -110,6 +113,7 @@ export default defineWorkflow({
     };
 
     for (;;) {
+      if (dynamicOnly) break;
       // 1) LEAD 路由：hunt 型机械转 ADV；research 型合并标记（进入槽位调度，最多 1 并发）
       let researchPending = false;
       for (const lead of pendingLeads(ctx.workdir)) {
@@ -135,7 +139,10 @@ export default defineWorkflow({
         } else if (advs.length && running.filter((r) => r.agent === "hunt").length < H) {
           toTodo(ctx.workdir, advs[0]);
           launch("hunt", uprompt(ctx, "hunt 任务，沿审计链路精读并提出风险假设。", `审计链路：todo/${advs[0]}`), { advId: advs[0].replace(/\.md$/, "") }, advs[0]);
-        } else if (!cognizeStopped && !running.some((r) => r.agent === "cognize")) {
+        } else if (!cognizeStopped
+                   && !pending(ctx.workdir, "ADV").length            // 有存量方向时不生产
+                   && !running.some((r) => r.agent === "hunt")       // 有在途精读时不观察（消除分析冲突）
+                   && !running.some((r) => r.agent === "cognize")) { // 串行
           st.counters.cognize_run++;
           launch("cognize", uprompt(ctx, "cognize 任务，从覆盖缺口自选一个切面建立认知、产出审计链路。"), { runNo: st.counters.cognize_run });
         } else break;
@@ -144,11 +151,9 @@ export default defineWorkflow({
 
       // 3) 终止判定：无在跑 + 队列空 + cognize 停工
       if (!running.length) {
+        // 队列空 + cognize 停工 → 主循环结束；否则上方 dispatch 必已补一轮 cognize
         if (!pending(ctx.workdir, "ADV").length && !pending(ctx.workdir, "HYP").length && cognizeStopped) break;
-        if (!pending(ctx.workdir, "ADV").length && !pending(ctx.workdir, "HYP").length && !cognizeStopped) {
-          // 队列空但 cognize 未停工：起一轮 cognize（上方 while 未进说明 MAX=0 的极端，防御）
-          continue;
-        }
+        if (!pending(ctx.workdir, "ADV").length && !pending(ctx.workdir, "HYP").length && !cognizeStopped) continue;
       }
       if (!running.length) break;
 
