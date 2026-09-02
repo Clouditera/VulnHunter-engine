@@ -18,6 +18,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { NODES, type NodeSpec } from "./nodes.ts";
 import { makeNodeTools, type FnBinding, type WsContext } from "./workspace-tools.ts";
+import { monitorState } from "./monitor-state.ts";
 import { getCoveragePaths, loadCoverageMap, aggregateCoverageEvents, persistCoverageMap, recordReadCoverageEvent } from "../code-coverage/coverage-core.ts";
 
 export interface NodeOptions {
@@ -85,6 +86,9 @@ export async function runNode(ctx: WorkflowContext, agentName: string, opts: Nod
   const ws: WsContext = { workdir: ctx.workdir, cwd: ctx.cwd };
   const customTools = makeNodeTools(ws, spec.fns, opts.binding ?? {});
 
+  const runId = `${agentName}-${Date.now()}`;
+  monitorState.nodeStart(runId, { id: runId, agent: agentName, target: opts.binding?.advId ?? opts.binding?.hypId, startTs: Date.now() });
+
   const { session } = await createAgentSession({
     cwd: ctx.cwd,
     agentDir: ctx.engineDir,
@@ -97,6 +101,7 @@ export async function runNode(ctx: WorkflowContext, agentName: string, opts: Nod
 
   let output = "";
   const sess: AgentSession = session;
+  try { const sf = (sess as any).sessionManager?.getSessionFile?.(); if (sf) monitorState.nodeSession(runId, sf); } catch { /* 记录失败无碍 */ }
   // hunt 精读 = 审计覆盖率唯一统计口径（fish 08-31 裁定）：runner 直记，不经 env
   const cov = agentName === "hunt" ? getCoveragePaths(ctx.workdir) : undefined;
   sess.subscribe((ev: AgentSessionEvent) => {
@@ -131,6 +136,7 @@ export async function runNode(ctx: WorkflowContext, agentName: string, opts: Nod
       pending = "上一次执行因平台错误中断。请核对工作区现状，从未完成处继续。";
     }
   }
+  monitorState.nodeEnd(runId);
   // TODO M3: session shutdown/资源释放 API 确认后补上
   if (cov) {
     const map = loadCoverageMap(cov.jsonPath, ctx.cwd, ctx.workdir);

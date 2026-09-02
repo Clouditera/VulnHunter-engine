@@ -12,6 +12,8 @@ import { readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { runNode, type Workflow, type WorkflowContext } from "./runtime.ts";
+import { monitorState } from "./monitor-state.ts";
+import { createMonitorComponent } from "./monitor.ts";
 
 const ENGINE_DIR = process.env.PI_CODING_AGENT_DIR ?? resolve(__dirname, "..", "..");
 const WORKFLOWS_DIR = join(ENGINE_DIR, "workflows");
@@ -82,4 +84,15 @@ export default function (pi: ExtensionAPI) {
       return { content: [{ type: "text", text: JSON.stringify(state, null, 2) }], details: {} };
     },
   }));
+
+  // 监控台：Ctrl+O 呼出三 tab 弹窗（运行/节点详情/覆盖率）
+  pi.registerShortcut("ctrl+o", {
+    description: "VulnHunter 监控台",
+    handler: async (ectx) => {
+      await ectx.ui.custom<void>((tui, theme, _kb, done) => createMonitorComponent(tui, theme, join(process.cwd(), ".vulnforge"), () => done()), {
+        overlay: true,
+        overlayOptions: { width: "90%", maxHeight: "80%" },
+      });
+    },
+  });
 }
