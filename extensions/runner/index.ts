@@ -46,7 +46,7 @@ export default function (pi: ExtensionAPI) {
       workflow: Type.String({ description: `workflow 名称，可选值见 workflows/ 目录` }),
       params: Type.Record(Type.String(), Type.String(), { description: "audit_scope / vuln_focus / sandbox_cfg 等启动参数" }),
     }),
-    async execute(_id, args, _signal) {
+    async execute(_id, args, _signal, _onUpdate, ectx) {
       await loadWorkflows();
       const w = workflows.get(args.workflow);
       if (!w) {
@@ -58,9 +58,9 @@ export default function (pi: ExtensionAPI) {
       state.status = "running"; state.workflow = w.name; state.log = []; state.error = undefined;
 
       const ctx: WorkflowContext = {
-        cwd: process.cwd(),
+        cwd: ectx.cwd,
         engineDir: ENGINE_DIR,
-        workdir: join(process.cwd(), ".vulnforge"),
+        workdir: join(ectx.cwd, ".vulnforge"),
         params: args.params,
         node: (name, opts) => runNode(ctx, name, opts),
         report: (msg) => { state.log.push(msg); }, // TODO M2: steer 回主会话
@@ -97,8 +97,8 @@ export default function (pi: ExtensionAPI) {
       })),
       excludes: Type.Optional(Type.Array(Type.String(), { description: "排除路径" })),
     }),
-    async execute(_id, args) {
-      const cwd = process.cwd();
+    async execute(_id, args, _signal, _onUpdate, ectx) {
+      const cwd = ectx.cwd;
       const CODE_EXT = /\.(c|h|cc|cpp|rs|go|py|js|ts|java|rb|lua|zig|m|mm)$/i;
       const countLines = (p: string): number => {
         try {
@@ -129,7 +129,7 @@ export default function (pi: ExtensionAPI) {
   pi.registerShortcut("f9", {
     description: "VulnHunter 监控台",
     handler: async (ectx) => {
-      await ectx.ui.custom<void>((tui, theme, _kb, done) => createMonitorComponent(tui, theme, join(process.cwd(), ".vulnforge"), () => done()), {
+      await ectx.ui.custom<void>((tui, theme, _kb, done) => createMonitorComponent(tui, theme, join(ectx.cwd, ".vulnforge"), () => done()), {
         overlay: true,
         overlayOptions: { width: "90%", maxHeight: "80%" },
       });
