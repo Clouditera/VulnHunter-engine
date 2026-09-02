@@ -179,6 +179,62 @@ export default defineWorkflow({
       if (!cognizeStopped && coverageMet(ctx) === true) { cognizeStopped = true; ctx.report("scope 覆盖达标，cognize 停工"); }
     }
 
+    // ---- 池 D：动态验证（poc-verify → ev-assess 同 finding 链式，并发=1 沙箱）----
+    if (dynamic) {
+      ctx.report("静态阶段完成，进入动态验证（池 D）");
+      for (;;) {
+        const findingsDir = join(ctx.workdir, "findings");
+        if (!existsSync(findingsDir)) break;
+        const { readFileSync } = await import("node:fs");
+        // 候选：finding_class=vulnerability 且 poc_status=pending
+        let target: string | undefined;
+        for (const d of readdirSync(findingsDir)) {
+          const rp = join(findingsDir, d, "report.yaml");
+          if (!existsSync(rp)) continue;
+          const txt = readFileSync(rp, "utf-8");
+          if (/finding_class:\s*vulnerability/.test(txt) && /poc_status:\s*pending/.test(txt)) { target = d; break; }
+        }
+        if (!target) break;
+        ctx.report(`池 D：poc-verify → ev-assess 链式，目标 ${target}`);
+        const r1 = await ctx.node("poc-verify", {
+          task: uprompt(ctx, "poc-verify 任务，在沙箱中复现 finding。", `目标 finding：findings/${target}/report.yaml`),
+        });
+        if (r1.aborted) { ctx.report("API 不可用，workflow 中止。"); return; }
+        // poc 成功才接 ev-assess（reproduced 才评估）
+        const rp = join(findingsDir, target, "report.yaml");
+        const txt = readFileSync(rp, "utf-8");
+        if (/poc_status:\s*reproduced/.test(txt) && /exp_status:\s*pending/.test(txt)) {
+          const r2 = await ctx.node("ev-assess", {
+            task: uprompt(ctx, "ev-assess 任务，评估 finding 在真实业务场景下的影响。", `目标 finding：findings/${target}/report.yaml`),
+          });
+          if (r2.aborted) { ctx.report("API 不可用，workflow 中止。"); return; }
+        }
+      }
+
+      // ---- exp-build 收尾：其它节点全部完成后执行；无新 exploits 产出即停 ----
+      for (;;) {
+        const exploitsDir = join(ctx.workdir, "exploits");
+        const before = existsSync(exploitsDir) ? readdirSync(exploitsDir).filter((d) => d.startsWith("EXP-")).length : 0;
+        // 组合信号：ev-assess 完成（exp_status 非 pending）的 vulnerability ≥ 2
+        const { readFileSync } = await import("node:fs");
+        const findingsDir = join(ctx.workdir, "findings");
+        if (!existsSync(findingsDir)) { ctx.report("无 findings，跳过 exp-build"); break; }
+        let evDone = 0;
+        for (const d of readdirSync(findingsDir)) {
+          const rp = join(findingsDir, d, "report.yaml");
+          if (!existsSync(rp)) continue;
+          const txt = readFileSync(rp, "utf-8");
+          if (/finding_class:\s*vulnerability/.test(txt) && /exp_status:\s*(confirmed|downgraded)/.test(txt)) evDone++;
+        }
+        if (evDone < 2) { ctx.report(`组合信号不足（已完成评估的 vulnerability：${evDone}），跳过 exp-build`); break; }
+        ctx.report("exp-build 启动");
+        const r = await ctx.node("exp-build", { task: uprompt(ctx, "exp-build 任务，探索并构造漏洞组合。") });
+        if (r.aborted) { ctx.report("API 不可用，workflow 中止。"); return; }
+        const after = existsSync(exploitsDir) ? readdirSync(exploitsDir).filter((d) => d.startsWith("EXP-")).length : 0;
+        if (after <= before) { ctx.report("exp-build 无新 exploits 产出，停止"); break; }
+      }
+    }
+
     // ---- 门禁收尾 ----
     const met = coverageMet(ctx);
     const finds = existsSync(join(ctx.workdir, "findings")) ? readdir0(join(ctx.workdir, "findings")) : 0;
