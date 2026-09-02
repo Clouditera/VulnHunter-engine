@@ -19,7 +19,7 @@ export interface NodeSpec {
 export const NODES: Record<string, NodeSpec> = {
   onboard: {
     skills: ["project-profiler", "threat-modeling", "wiki-maintainer"],
-    fns: ["update_profiler", "update_build_state", "emit_lead"],
+    fns: ["update_profiler", "update_build_state"],
   },
   research: {
     extensions: ["pi-web-access"],
@@ -28,7 +28,7 @@ export const NODES: Record<string, NodeSpec> = {
   cognize: {
     skills: ["wiki-maintainer"],
     extensions: ["code-coverage"],   // coverage 查询工具（记录侧由 hunt 独占）
-    fns: ["emit_adv_c", "emit_lead"],
+    fns: ["emit_adv_c"],
   },
   hunt: {
     fns: ["emit_hyp", "emit_lead"],

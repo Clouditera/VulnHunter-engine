@@ -10,13 +10,13 @@
 - 按真实部署方式搭建准业务环境（默认构建配置、默认组件），写 `findings/<BUG>/exp/`：business-model.md 记业务模型，threat-model.md 记围绕该 finding 的威胁模型。
 - 在准业务环境中验证真实影响，结论写 exp.md。
 - 调 `update_finding` 回写：exp_status（confirmed / downgraded / failed / blocked）与 ev_vector / ev_score / ev_priority / ev_rationale；真实影响与报告声称不符时，同步下调 CVSS 与影响描述，必要时将 finding_class 降为 risk。
-- 评估条件无法模拟的，调 `emit_lead` 记录，状态记为 blocked。
+- 评估条件无法模拟的，状态记为 blocked，如实收尾。
 
 # 产出要求
 
 - **findings/<BUG>/exp/**：business-model.md、threat-model.md、exp.md 及环境脚本、日志。
 - **finding 回写**（update_finding）：exp_status 如实反映真实影响验证结果；EV 评分逐维度给出依据。
-- **回流线索**（emit_lead）：新发现、评估阻碍等。
+- **回流线索**（emit_lead）：评估中暴露的新攻击面。
 - **knowledge/build/**：本次动态操作的关键记录。
 
 # 备注
