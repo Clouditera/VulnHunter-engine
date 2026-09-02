@@ -12,7 +12,7 @@
  * M4：池 D（poc→ev 链式）+ exp-build 收尾 + 预算。
  */
 
-import { existsSync, readdirSync, renameSync } from "node:fs";
+import { existsSync, readdirSync, renameSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { defineWorkflow, type NodeResult, type WorkflowContext } from "../extensions/runner/runtime.ts";
 import { loadState, saveState, readSandboxState } from "../extensions/runner/state.ts";
@@ -50,6 +50,7 @@ export default defineWorkflow({
     const dynamic = !!ctx.params.sandbox_cfg;
     const dynamicOnly = ctx.params.mode === "dynamic";
     const cognizeOnly = ctx.params.mode === "cognize";  // 只跑到池 A（验证 cognize 产出）
+    const phase0Only = ctx.params.mode === "phase0";    // 只跑 onboard+research（干净测试第一步）
 
     if (dynamicOnly) ctx.report("mode=dynamic：跳过 Phase 0 与静态主循环，直接进池 D");
 
@@ -81,7 +82,9 @@ export default defineWorkflow({
       ctx.report("research 完成");
     } else ctx.report("Phase 0: research 已完成（跳过）");
 
-    // ---- 主循环（池 A/B/C）----
+        if (phase0Only) { ctx.report("mode=phase0：onboard+research 完成，收工（状态已可备份）"); return; }
+
+// ---- 主循环（池 A/B/C）----
     // 崩溃恢复：todo/ 残留一律退回 leads/ 重新排队
     for (const f of pending(ctx.workdir, "ADV").concat()) { /* noop */ }
     try {
@@ -121,16 +124,25 @@ export default defineWorkflow({
       while (running.length < MAX) {
         const hyps = pending(ctx.workdir, "HYP");
         const advs = pending(ctx.workdir, "ADV");
-        if (!cognizeOnly && hyps.length && running.filter((r) => r.agent === "verify").length < V) {
-          toTodo(ctx.workdir, hyps[0]);
-          launch("verify", "verify 任务，研判风险假设的成立性。", `风险假设：todo/${hyps[0]}`, { hypId: hyps[0].replace(/\.md$/, "") }, hyps[0]);
+        // 幂等守卫：同名文件已在 todo/done → leads 里这份是节点用 write 另存的草稿副本，丢弃防重复派发
+        for (const f of [...hyps, ...advs]) {
+          if (existsSync(join(ctx.workdir, "todo", f)) || existsSync(join(ctx.workdir, "done", f))) {
+            rmSync(join(ctx.workdir, "leads", f));
+            ctx.report(`丢弃 leads 残留副本（已在流转）：${f}`);
+          }
+        }
+        const hyps2 = pending(ctx.workdir, "HYP");
+        const advs2 = pending(ctx.workdir, "ADV");
+        if (!cognizeOnly && hyps2.length && running.filter((r) => r.agent === "verify").length < V) {
+          toTodo(ctx.workdir, hyps2[0]);
+          launch("verify", "verify 任务，研判风险假设的成立性。", `风险假设：todo/${hyps2[0]}`, { hypId: hyps2[0].replace(/\.md$/, "") }, hyps2[0]);
         } else if (researchPending && !running.some((r) => r.agent === "research")) {
           researchPending = false;
           st.counters.research_run++;
           launch("research", "research 任务，补充检索（有回流线索指向新的检索方向）。", { runNo: st.counters.research_run });
-        } else if (!cognizeOnly && advs.length && running.filter((r) => r.agent === "hunt").length < H) {
-          toTodo(ctx.workdir, advs[0]);
-          launch("hunt", "hunt 任务，沿审计链路精读并提出风险假设。", `审计链路：todo/${advs[0]}`, { advId: advs[0].replace(/\.md$/, "") }, advs[0]);
+        } else if (!cognizeOnly && advs2.length && running.filter((r) => r.agent === "hunt").length < H) {
+          toTodo(ctx.workdir, advs2[0]);
+          launch("hunt", "hunt 任务，沿审计链路精读并提出风险假设。", `审计链路：todo/${advs2[0]}`, { advId: advs2[0].replace(/\.md$/, "") }, advs2[0]);
         } else if (!cognizeStopped
                    && !pending(ctx.workdir, "ADV").length            // 有存量方向时不生产
                    && !running.some((r) => r.agent === "hunt")       // 有在途精读时不观察（消除分析冲突）

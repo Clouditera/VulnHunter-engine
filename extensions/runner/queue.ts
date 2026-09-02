@@ -22,19 +22,28 @@ export function pending(workdir: string, kind: QueueKind): string[] {
   return readdirSync(dir(workdir, "leads")).filter((f) => re.test(f)).sort();
 }
 
+/** 幂等移动：源不在就检查目的地；两边都没有才报错（agent 可能手动 mv 过队列文件） */
+function move(workdir: string, file: string, from: "leads" | "todo", to: "todo" | "done" | "leads"): void {
+  const src = join(dir(workdir, from), file);
+  const dst = join(dir(workdir, to), file);
+  if (existsSync(src)) { renameSync(src, dst); return; }
+  if (existsSync(dst)) return; // 已被（agent 或上轮）移动过，视为已达终态
+  console.warn(`[queue] 移动忽略：${file} 既不在 ${from}/ 也不在 ${to}/`);
+}
+
 /** 派发即移 todo/，返回 todo 内路径 */
 export function toTodo(workdir: string, file: string): string {
-  renameSync(join(dir(workdir, "leads"), file), join(dir(workdir, "todo"), file));
+  move(workdir, file, "leads", "todo");
   return join("todo", file);
 }
 
 export function toDone(workdir: string, file: string): void {
-  renameSync(join(dir(workdir, "todo"), file), join(dir(workdir, "done"), file));
+  move(workdir, file, "todo", "done");
 }
 
 /** 异常结束退回 leads/ */
 export function backToLeads(workdir: string, file: string): void {
-  renameSync(join(dir(workdir, "todo"), file), join(dir(workdir, "leads"), file));
+  move(workdir, file, "todo", "leads");
 }
 
 export interface LeadRoute { file: string; type: "research" | "hunt"; body: string }
