@@ -4,7 +4,7 @@
  * 数据源：monitorState（进程内注册表）+ 节点 session jsonl + code-coverage 数据。
  */
 
-import type { Component, TUI } from "@earendil-works/pi-tui";
+import { truncateToWidth, visibleWidth, type Component, type TUI } from "@earendil-works/pi-tui";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
@@ -102,14 +102,18 @@ export function createMonitorComponent(tui: TUI, theme: Theme, workdir: string, 
     invalidate() { /* 无缓存渲染态 */ },
     render(width: number): string[] {
       const w = Math.min(width, 100);
+      const inner = w - 4; // 左右边框+边距
+      const row = (s: string) => `│ ${truncateToWidth(s, inner, "…", true)} │`;
       const tabs = TAB_NAMES.map(([k, label]) => (k === tab ? `[${label}]` : ` ${label} `)).join("  ");
       const height = process.stdout.rows ?? 30;
-      const body = tab === "run" ? renderRun(w) : tab === "detail" ? renderDetail(w, height) : renderCoverage(w);
+      const body = tab === "run" ? renderRun(inner) : tab === "detail" ? renderDetail(inner, height) : renderCoverage(inner);
+      const title = " VulnHunter 监控台 ";
+      const titleW = visibleWidth(title);
       return [
-        `┌ VulnHunter 监控台 ${"─".repeat(Math.max(0, w - 22))}┐`,
-        `│ ${tabs}${" ".repeat(Math.max(0, w - tabs.length - 26))}[Tab 切换] [Esc 关闭] │`,
+        `┌${title}${"─".repeat(Math.max(0, w - 2 - titleW))}┐`,
+        row(`${tabs}    [Tab 切换] [Esc 关闭]`),
         `├${"─".repeat(w - 2)}┤`,
-        ...body.map((l) => `│ ${l}`.slice(0, w - 1) + "│"),
+        ...body.map(row),
         `└${"─".repeat(w - 2)}┘`,
       ];
     },

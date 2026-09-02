@@ -8,7 +8,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "@earendil-works/pi-ai";
-import { readdirSync } from "node:fs";
+import { readdirSync, writeFileSync, mkdirSync, existsSync, statSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { runNode, type Workflow, type WorkflowContext } from "./runtime.ts";
@@ -82,6 +82,46 @@ export default function (pi: ExtensionAPI) {
     parameters: Type.Object({}),
     async execute() {
       return { content: [{ type: "text", text: JSON.stringify(state, null, 2) }], details: {} };
+    },
+  }));
+
+  // mark_scope：主会话与用户确认审计范围后落 scope.yaml（coverage 门禁基准）
+  pi.registerTool(defineTool({
+    name: "mark_scope",
+    label: "Mark Scope",
+    description: "标记审计范围：确认要审计的模块/文件清单，统计代码行数，写入 .vulnforge/scope.yaml 作为审计完成门禁基准。",
+    parameters: Type.Object({
+      entries: Type.Array(Type.Object({
+        path: Type.String({ description: "相对项目根的文件或目录路径" }),
+        threshold: Type.Optional(Type.Number({ description: "覆盖率达标阈值（百分比），默认 90" })),
+      })),
+      excludes: Type.Optional(Type.Array(Type.String(), { description: "排除路径" })),
+    }),
+    async execute(_id, args) {
+      const cwd = process.cwd();
+      const CODE_EXT = /\.(c|h|cc|cpp|rs|go|py|js|ts|java|rb|lua|zig|m|mm)$/i;
+      const countLines = (p: string): number => {
+        try {
+          const st = statSync(p);
+          if (st.isFile()) return CODE_EXT.test(p) ? readFileSync(p, "utf-8").split("\n").length : 0;
+          let total = 0;
+          for (const f of readdirSync(p)) total += countLines(join(p, f));
+          return total;
+        } catch { return 0; }
+      };
+      const lines: string[] = [];
+      let total = 0;
+      for (const e of args.entries) {
+        const n = countLines(join(cwd, e.path));
+        total += n;
+        lines.push(`${e.path}: ${n} 行（阈值 ${e.threshold ?? 90}%）`);
+      }
+      const wd = join(cwd, ".vulnforge");
+      if (!existsSync(wd)) mkdirSync(wd, { recursive: true });
+      let yaml = "entries:\n" + args.entries.map((e) => `  - path: ${e.path}\n    threshold: ${e.threshold ?? 90}`).join("\n") + "\n";
+      if (args.excludes?.length) yaml += "excludes:\n" + args.excludes.map((x) => `  - ${x}`).join("\n") + "\n";
+      writeFileSync(join(wd, "scope.yaml"), yaml);
+      return { content: [{ type: "text", text: `范围已标记（${args.entries.length} 条目，共 ${total} 行）：\n${lines.join("\n")}\n\n已写入 .vulnforge/scope.yaml，作为审计完成门禁。` }], details: {} };
     },
   }));
 
