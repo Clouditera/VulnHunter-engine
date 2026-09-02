@@ -1,29 +1,12 @@
 #!/usr/bin/env bash
-# VulnForge-chat 启动器（decide 主会话）
-# 系统提示词 = AGENTS.md（全局身份）+ main-prompt.md（decide 任务）
-# 扩展按需加载：--no-extensions 关闭自动发现，显式 -e 挂需要的；
-# 主会话不挂 code-coverage-tracker（decide 的阅读不计入 coverage——仅记录 hunt）
+# VulnHunter-engine（新架构）TUI 启动器——在目标项目根目录下运行
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# 加载模型 key 等环境变量（models.json 的 $VAR 引用）
-if [[ -f "$DIR/.env" ]]; then
-  set -a; source "$DIR/.env"; set +a
-fi
+if [[ -f "$DIR/.env" ]]; then set -a; source "$DIR/.env"; set +a; fi
 export PI_CODING_AGENT_DIR="$DIR"
-# decide 阶段身份：output-contract 据此对主会话施加 decide 契约；子会话 frontmatter envs 各自覆盖
-export VULNFORGE_STAGE="decide"
-exec pi \
-  --system-prompt "$DIR/AGENTS.md" \
-  --append-system-prompt "$DIR/main-prompt.md" \
-  --no-context-files \
-  --no-extensions \
-  --extension "$DIR/extensions/pi-subagents" \
-  --extension "$DIR/extensions/output-contract" \
+# 新架构白名单挂载：runner（scan/监控台）+ code-coverage（coverage 查询）+ pi-web-access（联网）
+exec pi --no-extensions \
+  --extension "$DIR/extensions/runner" \
   --extension "$DIR/extensions/code-coverage" \
-  --extension "$DIR/extensions/audit-lifecycle" \
-  --extension "$DIR/extensions/workspace-diff" \
-  --extension "$DIR/extensions/pi-context" \
-  --extension "$DIR/extensions/session-archive" \
-  --skill "$DIR/skills/threat-modeling" \
-  --skill "$DIR/skills/wiki-maintainer" \
+  --extension "$DIR/extensions/pi-web-access" \
   "$@"
