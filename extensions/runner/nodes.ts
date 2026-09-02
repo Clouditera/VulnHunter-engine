@@ -31,11 +31,9 @@ export const NODES: Record<string, NodeSpec> = {
     fns: ["emit_adv_c", "emit_lead"],
   },
   hunt: {
-    tools: ["read", "grep", "find", "ls"],
     fns: ["emit_hyp", "emit_lead"],
   },
   verify: {
-    tools: ["read", "grep", "find", "ls", "edit"],   // edit 用于往 HYP 正文追加研判
     skills: ["bug-report", "wiki-maintainer"],
     extensions: ["pi-web-access"],                    // 政策核验的在线查证
     fns: ["emit_finding", "emit_lead"],
