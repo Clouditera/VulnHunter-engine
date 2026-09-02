@@ -12,7 +12,7 @@
  * M4：池 D（poc→ev 链式）+ exp-build 收尾 + 预算。
  */
 
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import { defineWorkflow, type WorkflowContext, type NodeResult } from "../extensions/runner/runtime.ts";
 import { loadState, saveState, readSandboxState } from "../extensions/runner/state.ts";
@@ -88,6 +88,12 @@ export default defineWorkflow({
     } else ctx.report("Phase 0: research 已完成（跳过）");
 
     // ---- 主循环（池 A/B/C）----
+    // 崩溃恢复：todo/ 残留一律退回 leads/ 重新排队
+    for (const f of pending(ctx.workdir, "ADV").concat()) { /* noop */ }
+    try {
+      for (const f of readdirSync(join(ctx.workdir, "todo")).filter((f) => f.endsWith(".md")))
+        renameSync(join(ctx.workdir, "todo", f), join(ctx.workdir, "leads", f));
+    } catch { /* todo 不存在 */ }
     const running: Running[] = [];
     let cognizeIdle = st.cognize_idle_rounds;
     let cognizeStopped = coverageMet(ctx) === true;
@@ -101,13 +107,11 @@ export default defineWorkflow({
     };
 
     for (;;) {
-      // 1) LEAD 路由
+      // 1) LEAD 路由：hunt 型机械转 ADV；research 型合并标记（进入槽位调度，最多 1 并发）
+      let researchPending = false;
       for (const lead of pendingLeads(ctx.workdir)) {
-        if (lead.type === "research") {
-          st.counters.research_run++;
-          launch("research", uprompt(ctx, "research 任务，补充检索。回流线索已归档，请阅读其内容。"), { runNo: st.counters.research_run });
-          markLeadDone(ctx.workdir, lead.file);
-        } else {
+        if (lead.type === "research") { researchPending = true; markLeadDone(ctx.workdir, lead.file); }
+        else {
           const advId = leadToAdv(ctx.workdir, lead, ++st.counters.cognize_run);
           ctx.report(`LEAD 转 ADV：${lead.file} → ${advId}`);
         }
@@ -121,6 +125,10 @@ export default defineWorkflow({
         if (hyps.length && running.filter((r) => r.agent === "verify").length < V) {
           toTodo(ctx.workdir, hyps[0]);
           launch("verify", uprompt(ctx, "verify 任务，研判风险假设的成立性。", `风险假设：todo/${hyps[0]}`), { hypId: hyps[0].replace(/\.md$/, "") }, hyps[0]);
+        } else if (researchPending && !running.some((r) => r.agent === "research")) {
+          researchPending = false;
+          st.counters.research_run++;
+          launch("research", uprompt(ctx, "research 任务，补充检索（有回流线索指向新的检索方向）。"), { runNo: st.counters.research_run });
         } else if (advs.length && running.filter((r) => r.agent === "hunt").length < H) {
           toTodo(ctx.workdir, advs[0]);
           launch("hunt", uprompt(ctx, "hunt 任务，沿审计链路精读并提出风险假设。", `审计链路：todo/${advs[0]}`), { advId: advs[0].replace(/\.md$/, "") }, advs[0]);

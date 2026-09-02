@@ -51,14 +51,21 @@ function err(text: string) {
 function ensureDir(p: string) { if (!existsSync(p)) mkdirSync(p, { recursive: true }); }
 
 /** 全局取号：扫 dir 中匹配 prefix 的文件，取最大序号 +1 */
-function nextSerial(dir: string, re: RegExp): number {
-  if (!existsSync(dir)) return 1;
+function nextSerial(dirs: string[], re: RegExp): number {
   let max = 0;
-  for (const f of readdirSync(dir)) {
-    const m = f.match(re);
-    if (m) max = Math.max(max, parseInt(m[1], 10));
+  for (const dir of dirs) {
+    if (!existsSync(dir)) continue;
+    for (const f of readdirSync(dir)) {
+      const m = f.match(re);
+      if (m) max = Math.max(max, parseInt(m[1], 10));
+    }
   }
   return max + 1;
+}
+
+/** 队列三目录（编号占用判定要覆盖已流转走的文件） */
+function queueDirs(ws: WsContext): string[] {
+  return [join(ws.workdir, "leads"), join(ws.workdir, "todo"), join(ws.workdir, "done")];
 }
 
 // ---------------------------------------------------------------------------
@@ -66,7 +73,7 @@ function nextSerial(dir: string, re: RegExp): number {
 // ---------------------------------------------------------------------------
 
 function makeEmitAdv(ws: WsContext, line: "C" | "S", runNo: number): ToolDefinition {
-  let seq = 0;
+  let seq = nextSerial(queueDirs(ws), new RegExp(`^ADV-${line}${runNo}-A(\\d+)\\.md$`)) - 1;
   return defineTool({
     name: "emit_adv",
     label: "Emit ADV",
@@ -90,8 +97,9 @@ function makeEmitAdv(ws: WsContext, line: "C" | "S", runNo: number): ToolDefinit
 // ---------------------------------------------------------------------------
 
 function makeEmitHyp(ws: WsContext, advId: string): ToolDefinition {
-  let seq = 0;
   const chain = advId.replace(/^ADV-/, ""); // C1-A2
+  // 初始序号取该链已有 HYP 最大号（防同 ADV 重跑/重试时覆盖已有 HYP）
+  let seq = nextSerial(queueDirs(ws), new RegExp(`^HYP-${chain}-H(\\d+)\\.md$`)) - 1;
   return defineTool({
     name: "emit_hyp",
     label: "Emit HYP",
@@ -126,7 +134,7 @@ function makeEmitLead(ws: WsContext): ToolDefinition {
     async execute(_id, params) {
       const leadsDir = join(ws.workdir, "leads");
       ensureDir(leadsDir);
-      const n = nextSerial(leadsDir, /^LEAD-L(\d+)\.md$/);
+      const n = nextSerial(queueDirs(ws), /^LEAD-L(\d+)\.md$/);
       const leadId = `LEAD-L${n}`;
       const p = join(leadsDir, `${leadId}.md`);
       writeFileSync(p, `---\nid: ${leadId}\ntype: ${params.type}\n---\n\n${params.body}\n`);
