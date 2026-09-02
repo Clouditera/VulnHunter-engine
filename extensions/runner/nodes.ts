@@ -22,11 +22,12 @@ export const NODES: Record<string, NodeSpec> = {
     fns: ["update_profiler", "update_build_state"],
   },
   research: {
+    skills: ["audit-chain"],
     extensions: ["pi-web-access"],
     fns: ["emit_adv_s", "emit_lead"],
   },
   cognize: {
-    skills: ["wiki-maintainer"],
+    skills: ["wiki-maintainer", "audit-chain"],
     extensions: ["code-coverage"],   // coverage 查询工具（记录侧由 hunt 独占）
     fns: ["emit_adv_c"],
   },
