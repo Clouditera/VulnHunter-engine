@@ -12,7 +12,7 @@
  * M4：池 D（poc→ev 链式）+ exp-build 收尾 + 预算。
  */
 
-import { existsSync, readdirSync, renameSync, rmSync } from "node:fs";
+import { existsSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { defineWorkflow, type NodeResult, type WorkflowContext } from "../extensions/runner/runtime.ts";
 import { loadState, saveState, readSandboxState } from "../extensions/runner/state.ts";
@@ -51,6 +51,7 @@ export default defineWorkflow({
     const dynamicOnly = ctx.params.mode === "dynamic";
     const cognizeOnly = ctx.params.mode === "cognize";  // 只跑到池 A（验证 cognize 产出）
     const phase0Only = ctx.params.mode === "phase0";    // 只跑 onboard+research（干净测试第一步）
+    const directHunt = ctx.params.mode === "direct";    // 小项目直读：onboard 后整份代码一条 ADV 直接 hunt，免 research/cognize/verify
 
     if (dynamicOnly) ctx.report("mode=dynamic：跳过 Phase 0 与静态主循环，直接进池 D");
 
@@ -70,7 +71,7 @@ export default defineWorkflow({
     }
 
     // ---- Phase 0：research（一次性）----
-    if (!dynamicOnly && !st.research_done) {
+    if (!dynamicOnly && !directHunt && !st.research_done) {
       st.counters.research_run++; saveState(ctx.workdir, st);
       ctx.report("Phase 0: research 启动");
       const r = await ctx.node("research", {
@@ -80,9 +81,23 @@ export default defineWorkflow({
       if (r.aborted) { ctx.report("research 异常中止（API 不可用），workflow 退出"); return; }
       st.research_done = true; saveState(ctx.workdir, st);
       ctx.report("research 完成");
-    } else ctx.report("Phase 0: research 已完成（跳过）");
+    } else ctx.report(directHunt ? "Phase 0: research 跳过（mode=direct）" : "Phase 0: research 已完成（跳过）");
 
         if (phase0Only) { ctx.report("mode=phase0：onboard+research 完成，收工（状态已可备份）"); return; }
+
+    if (directHunt && !pending(ctx.workdir, "ADV").length && !existsSync(join(ctx.workdir, "done", "ADV-C0-A1.md")) && !existsSync(join(ctx.workdir, "todo", "ADV-C0-A1.md"))) {
+      const advBody = [
+        "# ADV：整份代码精读（小项目直读模式）",
+        "",
+        "## 审计链路",
+        "本项目规模小，不做链路切分：整份代码即链路。从主入口/主循环开始，沿真实数据流系统性读完全部有效代码。",
+        "",
+        "## 要求",
+        "尽可能挖掘风险假设（HYP）：任何可疑点都提出来，宁多勿漏；每条 HYP 落到具体 file:line 与触发路径。",
+      ].join("\n");
+      writeFileSync(join(ctx.workdir, "leads", "ADV-C0-A1.md"), advBody + "\n");
+      ctx.report("mode=direct：已机械生成整份代码 ADV-C0-A1");
+    }
 
 // ---- 主循环（池 A/B/C）----
     // 崩溃恢复：todo/ 残留一律退回 leads/ 重新排队
@@ -133,7 +148,7 @@ export default defineWorkflow({
         }
         const hyps2 = pending(ctx.workdir, "HYP");
         const advs2 = pending(ctx.workdir, "ADV");
-        if (!cognizeOnly && hyps2.length && running.filter((r) => r.agent === "verify").length < V) {
+        if (!cognizeOnly && !directHunt && hyps2.length && running.filter((r) => r.agent === "verify").length < V) {
           toTodo(ctx.workdir, hyps2[0]);
           launch("verify", "verify 任务，研判风险假设的成立性。", `风险假设：todo/${hyps2[0]}`, { hypId: hyps2[0].replace(/\.md$/, "") }, hyps2[0]);
         } else if (researchPending && !running.some((r) => r.agent === "research")) {
@@ -143,7 +158,7 @@ export default defineWorkflow({
         } else if (!cognizeOnly && advs2.length && running.filter((r) => r.agent === "hunt").length < H) {
           toTodo(ctx.workdir, advs2[0]);
           launch("hunt", "hunt 任务，沿审计链路精读并提出风险假设。", `审计链路：todo/${advs2[0]}`, { advId: advs2[0].replace(/\.md$/, "") }, advs2[0]);
-        } else if (!cognizeStopped
+        } else if (!cognizeStopped && !directHunt
                    && !pending(ctx.workdir, "ADV").length            // 有存量方向时不生产
                    && !running.some((r) => r.agent === "hunt")       // 有在途精读时不观察（消除分析冲突）
                    && !running.some((r) => r.agent === "cognize")) { // 串行
@@ -155,6 +170,7 @@ export default defineWorkflow({
 
       // 3) 终止判定：无在跑 + 队列空 + cognize 停工
       if (!running.length) {
+        if (directHunt && !pending(ctx.workdir, "ADV").length) break;
         if (cognizeOnly && cognizeStopped) break;
         // 队列空 + cognize 停工 → 主循环结束；否则上方 dispatch 必已补一轮 cognize
         if (!pending(ctx.workdir, "ADV").length && !pending(ctx.workdir, "HYP").length && cognizeStopped) break;
@@ -193,7 +209,7 @@ export default defineWorkflow({
     }
 
     // ---- 池 D：动态验证（poc-verify → ev-assess 同 finding 链式，并发=1 沙箱）----
-    if (dynamic && !cognizeOnly) {
+    if (dynamic && !cognizeOnly && !directHunt) {
       ctx.report("静态阶段完成，进入动态验证（池 D）");
       for (;;) {
         const findingsDir = join(ctx.workdir, "findings");

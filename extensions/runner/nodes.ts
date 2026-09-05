@@ -16,15 +16,23 @@ export interface NodeSpec {
   fns: FnKind[];
 }
 
+/** 初始化节点（onboard/research）统一配置（fish 09-05 裁定 #4：同一份，消除差异）
+ *  同会话连续执行：函数取两阶段并集，扩展同挂 pi-web-access。 */
+const INIT_NODE: NodeSpec = {
+  skills: ["project-profiler", "threat-modeling", "wiki-maintainer", "audit-chain"],
+  extensions: ["pi-web-access"],
+  fns: ["update_profiler", "update_build_state", "emit_adv_s", "emit_lead"],
+};
+
 export const NODES: Record<string, NodeSpec> = {
-  onboard: {
-    skills: ["project-profiler", "threat-modeling", "wiki-maintainer"],
-    fns: ["update_profiler", "update_build_state"],
-  },
-  research: {
-    skills: ["audit-chain"],
+  onboard: INIT_NODE,
+  research: INIT_NODE,
+  /** init-session 宿主（onboard/research 同会话 + hunt 多轮也在这个会话里跑，fish 09-05 #6）：
+   *  函数 = init 并集 + hunt 的 emit_hyp */
+  "init-host": {
+    skills: ["project-profiler", "threat-modeling", "wiki-maintainer", "audit-chain"],
     extensions: ["pi-web-access"],
-    fns: ["emit_adv_s", "emit_lead"],
+    fns: ["update_profiler", "update_build_state", "emit_adv_s", "emit_lead", "emit_hyp"],
   },
   cognize: {
     skills: ["wiki-maintainer", "audit-chain"],
@@ -38,6 +46,12 @@ export const NODES: Record<string, NodeSpec> = {
     skills: ["bug-report", "wiki-maintainer"],
     extensions: ["pi-web-access"],                    // 政策核验的在线查证
     fns: ["emit_finding", "emit_lead"],
+  },
+  /** HYP 链节点（verify→poc-verify→ev-assess 同会话）：函数取三阶段并集（fish 09-05 最简 run） */
+  "hyp-chain": {
+    skills: ["bug-report", "wiki-maintainer"],
+    extensions: ["pi-web-access"],
+    fns: ["emit_finding", "update_finding", "emit_lead"],
   },
   "poc-verify": {
     skills: ["bug-report"],

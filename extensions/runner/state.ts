@@ -17,6 +17,8 @@ export interface RunState {
   cognize_idle_rounds: number;
   /** 已失败过一次的文件（再失败即 stalled 归档） */
   stalled: string[];
+  /** init-session 的会话文件路径（runInit 完成后记录，幂等复活用） */
+  init_session_file?: string;
 }
 
 export function loadState(workdir: string): RunState {
