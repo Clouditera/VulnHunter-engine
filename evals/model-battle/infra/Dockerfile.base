@@ -1,0 +1,39 @@
+# vulnforge 评测 base 镜像：node22 + pi + 引擎
+# 构建：docker build -f Dockerfile.base -t vulnforge-base .
+FROM node:22-bookworm-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    bash ca-certificates git openssh-client python3 jq less procps \
+    && rm -rf /var/lib/apt/lists/*
+
+# pi（引擎依赖其 SDK 包）+ 引擎运行期依赖
+RUN npm install -g @earendil-works/pi-coding-agent@latest yaml \
+    && npm install -g @earendil-works/pi-server@0.85.0 || true
+# 引擎 node_modules 链接到全局包
+RUN G=$(npm root -g) && mkdir -p /opt/vulnforge/node_modules/@earendil-works \
+    && ln -sfn $G/@earendil-works/pi-coding-agent /opt/vulnforge/node_modules/@earendil-works/pi-coding-agent \
+    && ln -sfn $G/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-ai /opt/vulnforge/node_modules/@earendil-works/pi-ai \
+    && ln -sfn $G/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-tui /opt/vulnforge/node_modules/@earendil-works/pi-tui \
+    && ln -sfn $G/@earendil-works/pi-server /opt/vulnforge/node_modules/@earendil-works/pi-server \
+    && ln -sfn $G/yaml /opt/vulnforge/node_modules/yaml
+
+# 引擎（构建上下文 = 引擎仓；.dist 需先在宿主构建好）
+WORKDIR /opt/vulnforge
+COPY AGENTS.md main-prompt.md vf ./
+COPY tasks/ tasks/
+COPY skills/ skills/
+COPY extensions/ extensions/
+COPY workflows/ workflows/
+COPY schemas/ schemas/
+COPY .dist/ .dist/
+COPY settings.json models.json ./
+COPY evals/model-battle/infra/settings.eval.json ./
+COPY evals/model-battle/infra/run-case.mjs ./evals/model-battle/infra/
+RUN cp settings.eval.json settings.json
+# .env 不进镜像——docker run -e 注入密钥
+
+# 目标项目挂载/拷贝点
+WORKDIR /target
+ENV PI_CODING_AGENT_DIR=/opt/vulnforge
+# 评测镜像默认跑用例驱动；TUI 用时覆盖：docker run --entrypoint /opt/vulnforge/vf
+ENTRYPOINT ["node", "/opt/vulnforge/evals/model-battle/infra/run-case.mjs"]

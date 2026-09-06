@@ -1,0 +1,7 @@
+# redis 目标镜像：base + 指定版本源码
+# 构建：docker build -f Dockerfile.redis --build-arg REDIS_TAG=8.0.2 -t vulnforge-redis:8.0.2 .
+FROM vulnforge-base
+
+ARG REDIS_TAG
+RUN git clone --depth 1 --branch ${REDIS_TAG} https://github.com/redis/redis.git /target \
+    && cd /target && git log --oneline -1
