@@ -25,6 +25,7 @@ const ctx = {
   workdir: cwd + "/.vulnforge",
   params: {
     vuln_focus: process.env.VULN_FOCUS || "内存安全与输入解析问题",
+    ...(process.env.NO_RESEARCH === "1" ? { no_research: "1" } : {}),
     ...(process.env.SANDBOX_CFG ? { sandbox_cfg: process.env.SANDBOX_CFG } : {}),
   },
   node: undefined, // audit-direct 不用 ctx.node（lib 直接走 session.ts）
