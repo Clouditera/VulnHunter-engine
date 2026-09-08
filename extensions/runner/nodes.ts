@@ -42,6 +42,10 @@ export const NODES: Record<string, NodeSpec> = {
   hunt: {
     fns: ["emit_hyp", "emit_lead"],
   },
+  /** 直觉评测专用：静态局部审计，只产 HYP（无 lead/无沙箱） */
+  "hunt-intuition": {
+    fns: ["emit_hyp"],
+  },
   verify: {
     skills: ["bug-report", "wiki-maintainer"],
     extensions: ["pi-web-access"],                    // 政策核验的在线查证

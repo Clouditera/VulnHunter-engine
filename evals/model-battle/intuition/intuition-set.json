@@ -1,0 +1,278 @@
+{
+  "note": "直觉评测测试集（2026-09-08）：(项目,版本,漏洞) 三元组。scope=文件级；文件>3000 行时按 anchor 正则定位取附近 3000 行。anchor 用正则字符串。",
+  "projects": [
+    {
+      "project": "redis",
+      "version": "8.2.1",
+      "image": "vulnforge-target:redis-8.2.1",
+      "sessions": [
+        {
+          "name": "R6-lparser-uaf",
+          "files": [
+            {
+              "path": "deps/lua/src/lparser.c",
+              "anchor": "luaY_parser"
+            }
+          ],
+          "vulns": [
+            {
+              "id": "CVE-2025-49844",
+              "gt": "luaY_parser：脚本名 TString 未锚定在栈上，长脚本解析中 GC 释放 → UAF→RCE（修复 d5728cb5：setsvalue2s+incr_top）"
+            }
+          ]
+        },
+        {
+          "name": "R7-llex-oob",
+          "files": [
+            {
+              "path": "deps/lua/src/llex.c",
+              "anchor": "read_numeral"
+            }
+          ],
+          "vulns": [
+            {
+              "id": "CVE-2025-46819",
+              "gt": "llex.c read_numeral 数值解析越界读（修复 3a1624da：token 初始化+边界）"
+            }
+          ]
+        },
+        {
+          "name": "R8-luaunpack-int",
+          "files": [
+            {
+              "path": "deps/lua/src/lbaselib.c",
+              "anchor": "luaB_unpack"
+            },
+            {
+              "path": "deps/lua/src/ltable.c",
+              "anchor": "luaH_getnum"
+            }
+          ],
+          "vulns": [
+            {
+              "id": "CVE-2025-46817",
+              "gt": "luaB_unpack 结果计数 int 回绕 → 栈/表越界访问（修复 fc9abc77）"
+            }
+          ]
+        },
+        {
+          "name": "R9-scriptlua-confusion",
+          "files": [
+            {
+              "path": "src/script_lua.c",
+              "anchor": "lua_builtins_allow_list"
+            }
+          ],
+          "vulns": [
+            {
+              "id": "CVE-2025-46818",
+              "gt": "getfenv/setfenv 在允许列表 + 基础类型元表未只读 → 以其他用户上下文执行 Lua（修复 45eac026）"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "project": "gogs",
+      "version": "0.14.2",
+      "image": "vulnforge-target:gogs-0.14.2",
+      "sessions": [
+        {
+          "name": "G2-org-traversal",
+          "files": [
+            {
+              "path": "internal/database/org.go",
+              "anchor": "UserPath|CreateOrg|createOrg"
+            }
+          ],
+          "vulns": [
+            {
+              "id": "GHSA-c39w-43gm-34h5",
+              "gt": "组织名无字符校验，../ 经 UserPath/MkdirAll 路径穿越 → 任意目录创建→git hooks→RCE"
+            }
+          ]
+        },
+        {
+          "name": "G3-upload-symlink",
+          "files": [
+            {
+              "path": "internal/database/repo_editor.go",
+              "anchor": "UploadRepoFiles"
+            }
+          ],
+          "vulns": [
+            {
+              "id": "GHSA-89mr-xqfv-758m",
+              "gt": "UploadRepoFiles 只查叶子 IsSymlink，父路径 symlink 未查（兄弟函数用 hasSymlinkInPath）+ pathx.Clean 反斜杠转正斜杠 → 越界任意写"
+            }
+          ]
+        },
+        {
+          "name": "G4-smarthttp-confusion",
+          "files": [
+            {
+              "path": "internal/route/repo/http.go",
+              "anchor": "service"
+            }
+          ],
+          "vulns": [
+            {
+              "id": "GHSA-wmfg-5p4h-5fw3",
+              "gt": "smart HTTP 用 service query 参数判读写权限，路由却按实际路径执行 receive-pack → 只读用户可推写"
+            }
+          ]
+        },
+        {
+          "name": "G5-lfs-dedupe",
+          "files": [
+            {
+              "path": "internal/lfsutil/storage.go",
+              "anchor": "func .*Upload"
+            },
+            {
+              "path": "internal/route/lfs/basic.go",
+              "anchor": "serveUpload"
+            }
+          ],
+          "vulns": [
+            {
+              "id": "GHSA-6p9m-q3jp-47h4",
+              "gt": "LFS dedupe 路径（os.Stat 命中即返回成功）跳过 OID 哈希校验 → 任意绑定他人 OID 跨租户读私有内容"
+            }
+          ]
+        },
+        {
+          "name": "G6-api-privesc",
+          "files": [
+            {
+              "path": "internal/route/api/v1/api.go",
+              "anchor": "issue-tracker|mirror-sync"
+            },
+            {
+              "path": "internal/route/api/v1/repo/repo.go",
+              "anchor": "IssueTracker|MirrorSync"
+            }
+          ],
+          "vulns": [
+            {
+              "id": "GHSA-268j-37xf-pp52",
+              "gt": "issue-tracker/wiki/mirror-sync 三个 API 用 reqRepoWriter 而非 reqRepoAdmin → 写权限协作者可改管理员设置/注入外部 URL"
+            }
+          ]
+        },
+        {
+          "name": "G7-ssh-slowloris",
+          "files": [
+            {
+              "path": "internal/ssh/ssh.go",
+              "anchor": "NewServerConn|func listen"
+            }
+          ],
+          "vulns": [
+            {
+              "id": "GHSA-xp79-5mx3-jx52",
+              "gt": "SSH accept 循环 goroutine 未 SetDeadline，握手永久阻塞 → FD 耗尽 DoS"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "project": "vm2",
+      "version": "3.10.3",
+      "image": "vulnforge-target:vm2-3.10.3",
+      "sessions": [
+        {
+          "name": "J2-bridge-jstag",
+          "files": [
+            {
+              "path": "lib/bridge.js",
+              "anchor": "exception|wrapException|this\\.wrap"
+            }
+          ],
+          "vulns": [
+            {
+              "id": "GHSA-ffh4-j6h5-pg66",
+              "gt": "WASM JSTag 异常路径绕过 JS 层防护 → 宿主 process 对象泄露→RCE（3.10.5 bridge.js 大改修复）"
+            }
+          ]
+        },
+        {
+          "name": "J3-setupsandbox",
+          "files": [
+            {
+              "path": "lib/setup-sandbox.js",
+              "anchor": "resetPromiseSpecies"
+            }
+          ],
+          "vulns": [
+            {
+              "id": "GHSA-qvjj-29qf-hp7p",
+              "gt": "resetPromiseSpecies 依赖 [].includes/Object.defineProperty（可被沙箱覆写）→ species 保护失效 → Promise 逃逸 RCE"
+            },
+            {
+              "id": "GHSA-hw58-p9xv-2mjh",
+              "gt": "localPromise 未给 executor 套 try-catch，executor 内异常成 unhandled rejection 直达宿主 → 进程崩溃 DoS"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "project": "mruby",
+      "version": "3.3.0",
+      "image": "vulnforge-target:mruby-3.3.0",
+      "sessions": [
+        {
+          "name": "M1-array",
+          "files": [
+            {
+              "path": "src/array.c",
+              "anchor": "ary_fill|sort_cmp"
+            }
+          ],
+          "vulns": [
+            {
+              "id": "CVE-2025-12875",
+              "gt": "array.c ary_fill_exec 越界写"
+            },
+            {
+              "id": "CVE-2025-13120",
+              "gt": "array.c sort_cmp UAF"
+            }
+          ]
+        },
+        {
+          "name": "M2-codegen",
+          "files": [
+            {
+              "path": "mrbgems/mruby-compiler/core/codegen.c",
+              "anchor": "scope_new"
+            }
+          ],
+          "vulns": [
+            {
+              "id": "CVE-2025-7207",
+              "gt": "codegen.c scope_new nregs 堆溢出"
+            }
+          ]
+        },
+        {
+          "name": "M3-vm",
+          "files": [
+            {
+              "path": "src/vm.c",
+              "anchor": "mrb_vm_exec"
+            }
+          ],
+          "vulns": [
+            {
+              "id": "CVE-2026-1979",
+              "gt": "vm.c JMPNOT→JMPIF 优化致 mrb_vm_exec UAF"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
