@@ -36,6 +36,16 @@
 - deepseek 接入踩坑：①onboard 输出太短触发 compact "Nothing to compact" 崩溃（已修：过小跳过）；②pi 分支摘要请求用 `developer` role 被 cloudrouter 拒绝（已修：models.json compat.supportsDeveloperRole=false）。
 - 评测引擎副本冻结在 vulnhunt-test `~/vulnforge-eval/engine-frozen/`，与研发目录脱钩。
 
+## 产出与成本统计（09-08）
+
+HYP 总数（完整）：5.2=81，5.3=84，flash=81，deepseek=80（R5 失控 0 产出不计）。
+
+token（只保留数据齐全的对照格；磁盘事故清理丢失了 GLM 的 J1/P1/P2 与 deepseek 的 R1/J1/P1 用量）：
+
+- gogs（四模型齐全，均命中）：5.3=5.3M/95k ＜ 5.2=7.3M/80k ＜ flash=8.1M/113k ＜ deepseek=11.3M/122k（输入含缓存/输出）。
+- redis 5 用例合计（GLM 三家齐全）：flash=46.2M/711k（3 中，15.4M/中）；5.2=73.6M/800k 与 5.3=73.4M/780k（各 4 中，18.4M/中）。
+- 成本结论：glm-5.3 与 flash 较省；deepseek 读代码碎、轮次多，同任务偏贵。驱动已补 usage 自动归档（/out/_usage-*.json），后续批次不再丢。
+
 ## 产物位置
 
 - 全部 HYP：`vulnhunt-test:~/vulnforge-eval/out/phase-a/<model>/<case>/`

@@ -60,11 +60,22 @@ for (const c of cases) {
   const after = readdirSync(join(ctx.workdir, "leads")).filter((f) => f.startsWith("HYP-") && !before.has(f));
   try {
     mkdirSync(`/out/${c.name}`, { recursive: true });
-    for (const f of after) { copyFileSync(join(ctx.workdir, "leads", f), `/out/${c.name}/${f}`); rmSync(join(ctx.workdir, "leads", f)); }
+    for (const f of after) {
+      try { copyFileSync(join(ctx.workdir, "leads", f), `/out/${c.name}/${f}`); rmSync(join(ctx.workdir, "leads", f)); }
+      catch (e) { console.log(`归档单文件失败 ${f}:`, String(e)); }  // 失败则文件留在容器 leads 里
+    }
     writeFileSync(`/out/${c.name}/_meta.json`, JSON.stringify({ case: c.name, model, scope: c.scope, hyps: after }, null, 2));
   } catch (e) { console.log("out 归档失败:", String(e)); }
   console.log(`--- 用例 ${c.name} 完成：${after.length} 条 HYP ---`);
 }
 init.close();
+// 持久化本次运行的 token 用量到 /out（防止容器清理后丢失）
+try {
+  const { readdirSync: rd, readFileSync: rf, statSync } = await import("node:fs");
+  let ti = 0, to = 0;
+  const walk = (d) => { for (const f of rd(d)) { const fp = join(d, f); try { if (statSync(fp).isDirectory()) walk(fp); else if (f.endsWith(".jsonl")) for (const line of rf(fp, "utf8").split("\n")) { if (!line.includes('"usage"')) continue; try { const e = JSON.parse(line); if (e.type === "message" && e.message?.role === "assistant" && e.message.usage) { ti += (e.message.usage.input || 0) + (e.message.usage.cacheRead || 0); to += e.message.usage.output || 0; } } catch {} } } catch {} } };
+  walk(join(ctx.workdir, "sessions"));
+  writeFileSync(`/out/_usage-${model}-${Date.now()}.json`, JSON.stringify({ model, inputInclCache: ti, output: to, cases: cases.map(c => c.name) }, null, 2));
+} catch (e) { console.log("usage 归档失败:", String(e)); }
 console.log(`=== 阶段A 完成 ===`);
 process.exit(0);
