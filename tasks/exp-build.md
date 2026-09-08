@@ -11,7 +11,7 @@
 - 在准业务环境中探索组合、验证链路；环境继承成员 finding 的部署方式与业务模型。
 - 组合产物写 `exploits/` 下，每个组合一个目录：report.yaml、members/ 成员结论文档副本、组合脚本与验证日志。
 - 探索结论写 `knowledge/exploits/`：可行配方、不可行路径及原因、后续可试方向。
-- 调 `update_finding` 回写成员 finding 的链关系；发现新攻击面调 `emit_lead` 记录。
+- 用 `artifact update finding` 回写成员 finding 的链关系（exp_status 等）；发现新攻击面用 `artifact create lead` 记录。
 
 # 产出要求
 
@@ -26,3 +26,11 @@
 - 组合增益：report 列出成员单独影响与组合影响对照，每项提升有对应依据。
 - 环境真实：组合在准业务环境中验证，继承成员 finding 的部署方式与业务模型；列为泄露需数据回传的实际验证，仅请求到达不构成泄露证据。
 - 组合结果只写入 exploits/，成员 finding 保持原样。
+
+## 产物操作
+
+- `update finding`：exp_status / 链关系回写
+- `create lead`：新攻击面
+- exp 代码本体用 write/edit 写 exploits/ 目录（代码不走 artifact）
+
+产出统一走 `artifact` 工具（op+type+fields 三段）；不确定字段规格时先 `artifact({op:"spec", type:"<类型>"})` 查权威字段表。落盘产物不要自行删除。

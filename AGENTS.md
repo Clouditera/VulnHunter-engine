@@ -26,7 +26,7 @@
 
 - 被测目标的构建、运行等一切动态操作只在沙箱内执行；本地仅做静态动作（读代码、写分析文档）。
 - 沙箱工具链不满足时在沙箱内补齐；仍不满足的把 blocked 与原因记入 `knowledge/build/build.md`，不回落本地。
-- 动态操作前先确认沙箱可达（短重试不超过 3 次）；确认不可达时调 `update_build_state` 记为 unavailable，当前任务标记 blocked（reason: sandbox-unreachable）并退出，不再重试。
+- 动态操作前先确认沙箱可达（短重试不超过 3 次）；确认不可达时用 `artifact update build-state` 记为 unavailable，当前任务标记 blocked（reason: sandbox-unreachable）并退出，不再重试。
 - `knowledge/build/build.md` 记录沙箱状态，是单一记录点：`sandbox: available | unreachable`，`updated: <ISO 时间>`。
 
 # 审计方法
@@ -63,7 +63,7 @@
 
 ## 任务与线索流转
 
-任务与线索文件由系统统一管理，状态与流转（待处理 → 处理中 → 完成）由系统维护。节点按任务正文读取本次对象；结构化产物经函数（`emit_*` / `update_*`）落盘，散文产物用 write/edit 写入。
+任务与线索文件由系统统一管理，状态与流转（待处理 → 处理中 → 完成）由系统维护。节点按任务正文读取本次对象；结构化产物经 `artifact` 元工具落盘（op+type+fields；emit_*/update_* 已收编为其 create/update 操作），散文产物用 write/edit 写入。
 
 # 工作区
 
@@ -114,6 +114,6 @@ findings/
 - **信息脱敏**：对外产物只写目标项目本身，不写宿主绝对路径（如 `/home/xxx/...`），**不写审计流程、待办、线索等中间过程概念**。对外路径使用相对路径、脚本自定位路径或占位符，例如 `<poc-dir>`、`<project-src>`；容器内约定路径可以写。
 
 - **知识空白与威胁模型修正**：直接用 write/edit 更新 `knowledge/wiki/`、`knowledge/vuln-policy.md`。
-- **超出当前边界的信息写成回流线索**：发现新攻击面或值得继续追的线索时，调 `emit_lead` 落回流线索（`type: research | hunt`），由系统路由处理。
+- **超出当前边界的信息写成回流线索**：发现新攻击面或值得继续追的线索时，用 `artifact create lead` 落回流线索（`type: research | hunt`），由系统路由处理。
 - **语言**：输出语言遵循当前提示词中的 `输出语言` 要求。
 
