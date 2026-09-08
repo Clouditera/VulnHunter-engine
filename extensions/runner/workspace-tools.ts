@@ -31,6 +31,8 @@ export interface FnBinding {
   advId?: string;
   /** verify 正在研判的 HYP id（emit_finding 继承编号用），如 HYP-C1-A2-H3 */
   hypId?: string;
+  /** ADV 线别（artifact 元工具化后 create adv 用；C=cognize / S=research） */
+  advLine?: "C" | "S";
 }
 
 export type FnKind =
@@ -376,3 +378,6 @@ export function makeNodeTools(ws: WsContext, kinds: FnKind[], binding: FnBinding
   }
   return out;
 }
+
+// 工厂导出（artifact 元工具复用；makeNodeTools 保持兼容）
+export { makeEmitAdv, makeEmitHyp, makeEmitLead, makeEmitFinding, makeUpdateFinding, makeUpdateBuildState, makeUpdateProfiler };

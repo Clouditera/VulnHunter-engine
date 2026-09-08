@@ -27,7 +27,7 @@ export interface LibCtx extends SessionCtx {
 export async function runInit(ctx: LibCtx): Promise<SessionHandle | null> {
   const st = loadState(ctx.workdir);
   const initFile = st.init_session_file;
-  if (st.onboard_done && st.research_done && initFile && existsSync(initFile)) {
+  if (st.onboard_done && st.research_done && (st.build_done ?? true) && initFile && existsSync(initFile)) {
     ctx.report("init-session 已存在（复活）");
     return startSession(ctx, { agent: "init-host", id: "init", sessionFile: initFile, binding: { advId: "ADV-C0-A1", runNo: st.counters.research_run || 1 } });
   }
@@ -38,7 +38,26 @@ export async function runInit(ctx: LibCtx): Promise<SessionHandle | null> {
   let r = await s.prompt(buildPrompt(ctx, "onboard", "onboard 任务，初始化整个审计任务。"));
   if (r.aborted) { ctx.report("onboard 异常中止（API 不可用），workflow 退出"); s.close(); return null; }
   st.onboard_done = true; saveState(ctx.workdir, st);
-  ctx.report("onboard 完成，同会话继续 research");
+  ctx.report("onboard 完成，同会话继续 build（构建/部署理解）");
+
+  // build：理解项目构建/部署（fish 09-08 从 onboard 分离；实际执行构建部署走 runBuildExecute 按需）
+  r = await s.prompt(buildPrompt(ctx, "build", "build 任务，理解项目的构建与部署方式并落 build-state。"));
+  if (r.aborted) { ctx.report("build 异常中止（API 不可用），workflow 退出"); s.close(); return null; }
+  st.build_done = true; saveState(ctx.workdir, st);
+  ctx.report("build 完成，同会话继续 research");
+
+  // 评测模式：no_research=1 时关闭 research（防检索泄漏 GT）
+  if (ctx.params.no_research === "1") {
+    ctx.report("research 关闭（no_research=1）");
+    st.research_done = true; saveState(ctx.workdir, st);
+    try { await s.compact("保留：项目画像与威胁模型要点、构建部署要点、关键代码区域与行号、漏洞认可口径。丢弃：过程性输出。"); }
+    catch (e) { ctx.report(`compact 跳过（${String(e).includes("too small") ? "上下文过小" : e}）`); }
+    s.mark("init");
+    st.init_session_file = s.sessionFile();
+    saveState(ctx.workdir, st);
+    ctx.report("init-session 就绪（已压缩+标记 init，无 research）");
+    return s;
+  }
 
   st.counters.research_run++; saveState(ctx.workdir, st);
   // 同会话续跑：research 任务书作为 user prompt 主体（任务目标由 user prompt 保障，fish #8）
@@ -46,7 +65,8 @@ export async function runInit(ctx: LibCtx): Promise<SessionHandle | null> {
   if (r.aborted) { ctx.report("research 异常中止（API 不可用），workflow 退出"); s.close(); return null; }
   st.research_done = true; saveState(ctx.workdir, st);
 
-  await s.compact("保留：项目画像与威胁模型要点、关键代码区域与行号、漏洞认可口径、检索到的情报结论。丢弃：过程性输出与重复细节。");
+  try { await s.compact("保留：项目画像与威胁模型要点、构建部署要点、关键代码区域与行号、漏洞认可口径、检索到的情报结论。丢弃：过程性输出与重复细节。"); }
+  catch (e) { ctx.report(`compact 跳过（${String(e).includes("too small") ? "上下文过小" : e}）`); }
   s.mark("init");
   st.init_session_file = s.sessionFile();
   saveState(ctx.workdir, st);
@@ -228,4 +248,20 @@ export async function runExpBuild(ctx: LibCtx, init: SessionHandle): Promise<voi
     s.close();
     if (r.aborted || cnt() <= before) { ctx.report("exp-build 停止"); return; }
   }
+}
+
+// ---------------------------------------------------------------------------
+// runBuildExecute：按需实际构建/部署（fork 自 init，带画像与构建理解上下文）
+// 触发场景：poc-verify 前发现沙箱无目标实例（build-state.status != available）
+// ---------------------------------------------------------------------------
+
+export async function runBuildExecute(ctx: LibCtx, init: SessionHandle, requirement: string): Promise<boolean> {
+  await init.goto("init");
+  const s = await init.fork(`build-exec-${Date.now()}`, "build");
+  try {
+    const r = await s.prompt(buildPrompt(ctx, "build",
+      `build 执行任务：按以下要求实际构建并部署项目，完成后把实例连接信息写入 build-state（status=available）。要求：${requirement}`));
+    if (r.aborted) { ctx.report("build 执行中止（API 不可用）"); return false; }
+    return true;
+  } finally { s.close(); }
 }

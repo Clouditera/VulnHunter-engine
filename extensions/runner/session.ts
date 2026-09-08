@@ -18,7 +18,8 @@ import {
 import { appendFileSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { NODES, type NodeSpec } from "./nodes.ts";
-import { makeNodeTools, type FnBinding, type WsContext } from "./workspace-tools.ts";
+import { type FnBinding, type WsContext } from "./workspace-tools.ts";
+import { makeArtifactTool } from "./artifact.ts";
 import { monitorState } from "./monitor-state.ts";
 import { getCoveragePaths, loadCoverageMap, aggregateCoverageEvents, persistCoverageMap, recordReadCoverageEvent } from "../code-coverage/coverage-core.ts";
 
@@ -75,7 +76,7 @@ function lineage(workdir: string, rec: Record<string, unknown>): void {
   try { appendFileSync(join(workdir, "sessions-lineage.jsonl"), JSON.stringify({ ts: new Date().toISOString(), ...rec }) + "\n"); } catch { /* 血缘记录失败无碍 */ }
 }
 
-async function createSession(ctx: SessionCtx, agentName: string, binding: FnBinding, sessionManager?: SessionManager): Promise<{ sess: AgentSession; spec: NodeSpec; customTools: ReturnType<typeof makeNodeTools> }> {
+async function createSession(ctx: SessionCtx, agentName: string, binding: FnBinding, sessionManager?: SessionManager): Promise<{ sess: AgentSession; spec: NodeSpec; customTools: ReturnType<typeof makeArtifactTool>[] }> {
   const spec: NodeSpec | undefined = NODES[agentName];
   if (!spec) throw new Error(`未知节点: ${agentName}（nodes.ts 未定义）`);
 
@@ -94,7 +95,7 @@ async function createSession(ctx: SessionCtx, agentName: string, binding: FnBind
   await resourceLoader.reload();
 
   const ws: WsContext = { workdir: ctx.workdir, cwd: ctx.cwd };
-  const customTools = makeNodeTools(ws, spec.fns, binding);
+  const customTools = [makeArtifactTool(ws, binding, agentName)];   // artifact 元工具恒定挂载（fns 白名单已废，fish 09-08）
 
   const { session } = await createAgentSession({
     cwd: ctx.cwd,

@@ -8,6 +8,8 @@ import { join } from "node:path";
 
 export interface RunState {
   onboard_done: boolean;
+  /** build（构建/部署理解）完成标记 */
+  build_done?: boolean;
   research_done: boolean;
   counters: {
     cognize_run: number;   // 池 A 已起过的 cognize 运行数（C 线取号基数）
