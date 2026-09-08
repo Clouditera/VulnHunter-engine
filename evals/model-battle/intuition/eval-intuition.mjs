@@ -68,7 +68,7 @@ async function runSession(spec) {
   if (existsSync(`/out/${spec.name}/_meta.json`)) { ctx.report(`会话 ${spec.name} 已有结果，跳过`); return; }
   const notes = spec.files.map(scopeNote);
   ctx.report(`会话 ${spec.name} 开始，scope: ${notes.join("；")}`);
-  const before = new Set(readdirSync(join(ctx.workdir, "leads")).filter((f) => f.startsWith("HYP-")));
+  const hypPrefix = `HYP-${spec.name}-`;  // 归档按会话名精确前缀归因（并发会话共享 leads 目录，before/after 差集会抢隔壁的 HYP）
   const s = await startSession(ctx, { agent: "hunt-intuition", id: spec.name, binding: { advId: spec.name } });
   try {
     for (let r = 1; r <= rounds; r++) {
@@ -92,7 +92,7 @@ async function runSession(spec) {
     const usage = sf ? sessionUsage(ctx.workdir, sf) : null;
     s.close();
     // 归档本会话产出的 HYP
-    const after = readdirSync(join(ctx.workdir, "leads")).filter((f) => f.startsWith("HYP-") && !before.has(f));
+    const after = readdirSync(join(ctx.workdir, "leads")).filter((f) => f.startsWith(hypPrefix));
     try {
       mkdirSync(`/out/${spec.name}`, { recursive: true });
       for (const f of after) {
