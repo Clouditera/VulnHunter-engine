@@ -34,8 +34,9 @@ export interface SessionCtx {
 export interface SessionHandle {
   readonly id: string;
   readonly agent: string;
-  /** 发送任务并等待完成；pi 异常按 runtime 裁定重试/恢复（连续 3 次=API 不可用，aborted=true） */
-  prompt(text: string): Promise<{ aborted: boolean }>;
+  /** 发送任务并等待完成；pi 异常按 runtime 裁定重试/恢复（连续 3 次=API 不可用，aborted=true）。
+   *  marks.start/done：发送后/完成后自动打标（fish 09-09 打标规则内化） */
+  prompt(text: string, marks?: { start?: string; done?: string }): Promise<{ aborted: boolean }>;
   /** 纯打标记（当前叶子位置） */
   mark(label: string): void;
   /** 压缩当前上下文（独立动词） */
@@ -46,6 +47,8 @@ export interface SessionHandle {
   fork(id: string, agent?: string, binding?: FnBinding): Promise<SessionHandle>;
   /** hunt 覆盖率记录开关（init 宿主只在 hunt 轮次期间打开，口径=hunt 精读） */
   setCoverage(on: boolean): void;
+  /** 会话内动态改 binding（如同一主干会话切 hunt 轮次时换编号 source） */
+  setBinding(patch: Partial<FnBinding>): void;
   /** 当前会话文件路径 */
   sessionFile(): string | undefined;
   /** 释放资源 */
@@ -118,7 +121,8 @@ export async function startSession(ctx: SessionCtx, opts: {
 }): Promise<SessionHandle> {
   const id = opts.id ?? `${opts.agent}-${Date.now()}`;
   const sm = opts.sessionFile ? SessionManager.open(opts.sessionFile) : undefined;
-  const { sess, spec } = await createSession(ctx, opts.agent, opts.binding ?? {}, sm);
+  const bindingRef: FnBinding = opts.binding ?? {};
+  const { sess, spec } = await createSession(ctx, opts.agent, bindingRef, sm);
 
   // 监控 + hunt 覆盖记录（hunt 精读=覆盖率唯一口径）
   monitorState.nodeStart(id, { id, agent: opts.agent, target: opts.binding?.advId ?? opts.binding?.hypId, startTs: Date.now() });
@@ -142,14 +146,18 @@ export async function startSession(ctx: SessionCtx, opts: {
     id,
     agent: opts.agent,
 
-    async prompt(text: string) {
+    async prompt(text: string, marks?: { start?: string; done?: string }) {
       let failures = 0;
       let pending = text;
+      let firstTry = true;
       for (;;) {
         try {
           await sess.prompt(pending);
+          if (firstTry && marks?.start) handle.mark(marks.start);   // 发送后打 start（fish 09-09）
+          firstTry = false;
           await sess.waitForIdle();
           flushCoverage();
+          if (marks?.done) handle.mark(marks.done);                 // 完成后打 done
           return { aborted: false };
         } catch (e) {
           failures++;
@@ -177,7 +185,9 @@ export async function startSession(ctx: SessionCtx, opts: {
 
     async goto(label: string, opts?: { summarize?: boolean; customInstructions?: string; summaryLabel?: string }) {
       const sm2 = (sess as any).sessionManager as SessionManager;
-      const entry = sm2.getEntries().find((e) => sm2.getLabel(e.id) === label);
+      const entries = sm2.getEntries();
+      let entry = entries.find((e) => sm2.getLabel(e.id) === label)
+        ?? entries.find((e) => (sm2.getLabel(e.id) ?? "").startsWith(label));   // 前缀匹配（成分表标记按前缀定位）
       if (!entry) throw new Error(`goto 失败：会话树上没有标记 "${label}"`);
       const r = await sess.navigateTree(entry.id, {
         summarize: opts?.summarize ?? false,
@@ -204,6 +214,8 @@ export async function startSession(ctx: SessionCtx, opts: {
     },
 
     setCoverage(on: boolean) { covOn = on; },
+
+    setBinding(patch: Partial<FnBinding>) { Object.assign(bindingRef, patch); },
 
     sessionFile() {
       try { return (sess as any).sessionManager?.getSessionFile?.(); } catch { return undefined; }

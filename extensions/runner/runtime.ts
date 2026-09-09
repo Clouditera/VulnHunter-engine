@@ -51,3 +51,91 @@ export async function runNode(ctx: WorkflowContext, agentName: string, opts: Nod
   handle.close();
   return { agent: agentName, output, aborted: r.aborted };
 }
+
+// ---------------------------------------------------------------------------
+// 阶段化 workflow（fish 09-09：会话+标记=可寻址断点，自由选择节点开启任务，内化进架构）
+// ---------------------------------------------------------------------------
+
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+
+export interface StageDef {
+  name: string;
+  run(sctx: StageCtx): Promise<void>;
+}
+
+export interface StagedWorkflow {
+  name: string;
+  description: string;
+  stages(wfCtx: WorkflowContext): StageDef[];   // 阶段表可按参数生成（如轮数）
+}
+
+export function defineStagedWorkflow(w: StagedWorkflow): StagedWorkflow { return w; }
+
+export interface RunState {
+  workflow: string;
+  runId: string;
+  stages: Record<string, "pending" | "done" | "failed" | "skipped">;
+  /** 角色 → 会话文件路径（阶段间复活用） */
+  sessions: Record<string, string>;
+  /** workflow 自定义进度数据 */
+  data: Record<string, unknown>;
+}
+
+export interface StageCtx extends WorkflowContext {
+  state: RunState;
+  save(): void;
+  /** 按角色开/复活会话（有文件则复活，否则新建并登记） */
+  openSession(role: string, agent: string, opts?: { binding?: FnBinding; fresh?: boolean }): Promise<import("./session.ts").SessionHandle>;
+}
+
+/** 跑阶段化 workflow；from=断点续跑，only=单步重试 */
+export async function runStages(wf: StagedWorkflow, ctx: WorkflowContext, opts: { runId?: string; from?: string; only?: string } = {}): Promise<void> {
+  const runId = opts.runId ?? `${Date.now()}`;
+  const runsDir = join(ctx.workdir, "runs");
+  mkdirSync(runsDir, { recursive: true });
+  const statePath = join(runsDir, `${wf.name}-${runId}.json`);
+
+  let state: RunState;
+  if (existsSync(statePath)) {
+    state = JSON.parse(readFileSync(statePath, "utf-8"));
+  } else {
+    state = { workflow: wf.name, runId, stages: {}, sessions: {}, data: {} };
+  }
+  const save = () => writeFileSync(statePath, JSON.stringify(state, null, 2));
+
+  const sctx: StageCtx = {
+    ...ctx, state, save,
+    async openSession(role, agent, o = {}) {
+      const file = state.sessions[role];
+      const h = await startSession(ctx, !o.fresh && file && existsSync(file)
+        ? { agent, id: role, sessionFile: file, binding: o.binding }
+        : { agent, id: role, binding: o.binding });
+      const f = h.sessionFile?.();
+      if (f) { state.sessions[role] = f; save(); }
+      return h;
+    },
+  };
+
+  const stages = wf.stages(ctx);
+  for (const st of stages) if (!(st.name in state.stages)) state.stages[st.name] = "pending";
+  save();
+
+  let active = !opts.from && !opts.only;
+  for (const st of stages) {
+    if (opts.only && st.name !== opts.only) continue;
+    if (!active && st.name === opts.from) active = true;
+    if (!active) continue;
+    if (!opts.only && state.stages[st.name] === "done") continue;   // 断点续跑跳过已完成
+    ctx.report(`—— 阶段 ${st.name} ——`);
+    try {
+      await st.run(sctx);
+      state.stages[st.name] = "done"; save();
+    } catch (e) {
+      state.stages[st.name] = "failed"; save();
+      ctx.report(`阶段 ${st.name} 失败：${String(e).slice(0, 200)}（修复后可 --from ${st.name} 续跑）`);
+      throw e;
+    }
+  }
+  ctx.report(`workflow ${wf.name}（runId=${runId}）执行完毕`);
+}

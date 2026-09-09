@@ -27,54 +27,50 @@ export interface LibCtx extends SessionCtx {
 export async function runInit(ctx: LibCtx): Promise<SessionHandle | null> {
   const st = loadState(ctx.workdir);
   const initFile = st.init_session_file;
-  if (st.onboard_done && st.research_done && (st.build_done ?? true) && initFile && existsSync(initFile)) {
+  if (st.onboard_done && st.research_done && initFile && existsSync(initFile)) {
     ctx.report("init-session 已存在（复活）");
-    return startSession(ctx, { agent: "init-host", id: "init", sessionFile: initFile, binding: { advId: "ADV-C0-A1", runNo: st.counters.research_run || 1 } });
+    return startSession(ctx, { agent: "init-host", id: "init", sessionFile: initFile, binding: { advId: "ADV-C0-A1", runNo: st.counters.research_run || 1, advLine: "S" } });
   }
 
-  ctx.report("初始化：onboard→research 同会话启动");
-  const s = await startSession(ctx, { agent: "init-host", id: "init", binding: { advId: "ADV-C0-A1", runNo: st.counters.research_run + 1 } });
+  ctx.report("初始化：onboard→build→research 同会话三段");
+  const s = await startSession(ctx, { agent: "init-host", id: "init", binding: { advId: "ADV-C0-A1", runNo: st.counters.research_run + 1, advLine: "S" } });
+  const advCount = () => { try { return readdirSync(join(ctx.workdir, "leads")).filter((f) => f.startsWith("ADV-")).length; } catch { return 0; } };
 
-  let r = await s.prompt(buildPrompt(ctx, "onboard", "onboard 任务，初始化整个审计任务。"));
+  let r = await s.prompt(buildPrompt(ctx, "onboard", "onboard 任务，初始化整个审计任务。"),
+    { start: "onboard-start[∅]", done: "onboard-done[on][+profiler]" });
   if (r.aborted) { ctx.report("onboard 异常中止（API 不可用），workflow 退出"); s.close(); return null; }
   st.onboard_done = true; saveState(ctx.workdir, st);
-  ctx.report("onboard 完成，同会话继续 build（构建/部署理解）");
 
-  // build：理解项目构建/部署（fish 09-08 从 onboard 分离；实际执行构建部署走 runBuildExecute 按需）
-  r = await s.prompt(buildPrompt(ctx, "build", "build 任务，理解项目的构建与部署方式并落 build-state。"));
+  // build（fish 09-08 从 onboard 分离）：理解构建/部署
+  r = await s.prompt(buildPrompt(ctx, "build", "build 任务，理解项目的构建与部署方式并落 build-state。"),
+    { start: "build-start[on]", done: "build-done[on,bu][+build-state]" });
   if (r.aborted) { ctx.report("build 异常中止（API 不可用），workflow 退出"); s.close(); return null; }
   st.build_done = true; saveState(ctx.workdir, st);
-  ctx.report("build 完成，同会话继续 research");
 
-  // 评测模式：no_research=1 时关闭 research（防检索泄漏 GT）
   if (ctx.params.no_research === "1") {
     ctx.report("research 关闭（no_research=1）");
+  } else {
+    st.counters.research_run++; saveState(ctx.workdir, st);
+    const advBefore = advCount();
+    r = await s.prompt(buildPrompt(ctx, "research", "research 任务，检索公开信息与 git 信息、补齐漏洞认可口径。"),
+      { start: "research-start[on,bu]" });
+    if (r.aborted) { ctx.report("research 异常中止（API 不可用），workflow 退出"); s.close(); return null; }
+    s.mark(`research-done[on,bu,re][+ADV×${advCount() - advBefore},wiki]`);
     st.research_done = true; saveState(ctx.workdir, st);
-    try { await s.compact("保留：项目画像与威胁模型要点、构建部署要点、关键代码区域与行号、漏洞认可口径。丢弃：过程性输出。"); }
-    catch (e) { ctx.report(`compact 跳过（${String(e).includes("too small") ? "上下文过小" : e}）`); }
-    s.mark("init");
-    st.init_session_file = s.sessionFile();
-    saveState(ctx.workdir, st);
-    ctx.report("init-session 就绪（已压缩+标记 init，无 research）");
-    return s;
   }
 
-  st.counters.research_run++; saveState(ctx.workdir, st);
-  // 同会话续跑：research 任务书作为 user prompt 主体（任务目标由 user prompt 保障，fish #8）
-  r = await s.prompt(buildPrompt(ctx, "research", "research 任务，检索公开信息与 git 信息、补齐漏洞认可口径。"));
-  if (r.aborted) { ctx.report("research 异常中止（API 不可用），workflow 退出"); s.close(); return null; }
-  st.research_done = true; saveState(ctx.workdir, st);
-
-  try { await s.compact("保留：项目画像与威胁模型要点、构建部署要点、关键代码区域与行号、漏洞认可口径、检索到的情报结论。丢弃：过程性输出与重复细节。"); }
-  catch (e) { ctx.report(`compact 跳过（${String(e).includes("too small") ? "上下文过小" : e}）`); }
-  s.mark("init");
+  // 压缩跳转：回到 onboard-start 锚点，三段压成摘要；init 标记落在摘要处（fish 09-09 定稿形态）
+  await s.goto("onboard-start[∅]", {
+    summarize: true,
+    summaryLabel: "init[Σ(on,bu,re)]",
+    customInstructions: "保留：项目画像与威胁模型要点、构建部署要点、关键代码区域与行号、漏洞认可口径、检索到的情报结论。丢弃：过程性输出与重复细节。摘要正文控制在 4000 字以内。",
+  });
   st.init_session_file = s.sessionFile();
   saveState(ctx.workdir, st);
-  ctx.report("init-session 就绪（已压缩+标记 init）");
+  ctx.report("init-session 就绪（压缩跳转完成，标记 init[Σ(on,bu,re)]）");
   return s;
 }
 
-// ---------------------------------------------------------------------------
 // runHuntRounds：分支往返多轮 hunt
 // ---------------------------------------------------------------------------
 
@@ -166,6 +162,10 @@ export interface HypChainOpts {
   dynamic?: boolean;
   verifyPool: Pool;
   sandboxPool: Pool;
+  /** fork 点标记（默认 verify-start 旧形态；轻量版传出生轮 huntN-done 前缀匹配） */
+  forkPoint?: string;
+  /** 链会话启动成分描述（如 Σ(init,h1,h2)）；缺省 Σ(init) */
+  birthIngredients?: string;
 }
 
 /** fork 互斥：并发链从同一 init 会话分叉时串行化（goto+fork 是树操作，很快） */
@@ -182,14 +182,26 @@ export async function runHypChain(ctx: LibCtx, init: SessionHandle, hypFile: str
     // 从 verify-start 标记 fork 出该 HYP 的独立会话（继承 hunt 各轮摘要）
     const unlock = await lockFork();
     let chain: SessionHandle;
+    const forkAt = opts.forkPoint ?? "verify-start";
+    const hypShort = hypId.replace(/^HYP-/, "");           // hunt1-H2
+    const roundShort = (forkAt.match(/hunt(\d+)/) ? `h${forkAt.match(/hunt(\d+)/)![1]}` : undefined) ?? "verify-start";
     try {
-      await init.goto("verify-start");
-      chain = await init.fork(`chain-${hypId}`, "hyp-chain", { hypId });
+      await init.goto(forkAt);   // 精确标记匹配（huntN-done 标记全名带成分表，goto 用前缀查）
+      chain = await init.fork(`init/${roundShort}/chain-${hypId}`, "hyp-chain", { hypId });
     } finally { unlock(); }
     try {
-      const r = await chain.prompt(buildPrompt(ctx, "verify", "verify 任务，研判风险假设的成立性。", `风险假设：todo/${hypFile}`));
+      // 启动 compact（fish 09-09：HYP 的初始会话启动时执行）
+      try { await chain.compact("保留：当前研判 HYP 的主张/锚点/相关代码细节与推理、项目画像与构建要点；丢弃无关过程。"); }
+      catch (e) { ctx.report(`${hypId} 启动 compact 跳过（${String(e).includes("too small") ? "上下文过小" : String(e).slice(0, 60)}）`); }
+      const ing = opts.birthIngredients ?? "Σ(init)";
+      const r = await chain.prompt(buildPrompt(ctx, "verify", "verify 任务，研判风险假设的成立性。", `风险假设：todo/${hypFile}`),
+        { start: `ve(${hypShort})-start[${ing}]` });
       if (r.aborted) { ctx.report(`${hypId}：API 不可用，链中止`); backToLeads(ctx.workdir, hypFile); return; }
-      if (!existsSync(bugDir)) { ctx.report(`裁决：${hypId} → refuted`); toDone(ctx.workdir, hypFile); return; }
+      if (!existsSync(bugDir)) {
+        chain.mark(`ve(${hypShort})-done[${ing},ve(${hypShort})][+refuted]`);
+        ctx.report(`裁决：${hypId} → refuted`); toDone(ctx.workdir, hypFile); return;
+      }
+      chain.mark(`ve(${hypShort})-done[${ing},ve(${hypShort})][+BUG-${hypShort}·confirmed]`);
       ctx.report(`裁决：${hypId} → confirmed（finding 已产出）`);
 
       if (dynamic && readSandboxState(ctx.workdir) === "available") {
