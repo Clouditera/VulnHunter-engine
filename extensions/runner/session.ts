@@ -152,9 +152,9 @@ export async function startSession(ctx: SessionCtx, opts: {
       let firstTry = true;
       for (;;) {
         try {
-          await sess.prompt(pending);
-          if (firstTry && marks?.start) handle.mark(marks.start);   // 发送后打 start（fish 09-09）
+          if (firstTry && marks?.start) handle.mark(marks.start);   // 任务发出前打 start（pi 的 prompt 会阻塞到完成，只能打在提交前——树序正确：start 标在用户消息前）
           firstTry = false;
+          await sess.prompt(pending);
           await sess.waitForIdle();
           flushCoverage();
           if (marks?.done) handle.mark(marks.done);                 // 完成后打 done
