@@ -10,7 +10,7 @@
 import { defineWorkflow } from "../extensions/runner/runtime.ts";
 import { Pool } from "../extensions/runner/pools.ts";
 import { pending } from "../extensions/runner/queue.ts";
-import { runInit, runHuntRounds, runHypChain, runExpBuild } from "./lib.ts";
+import { runInit, runHuntRounds, runHypChain } from "./lib.ts";
 
 export default defineWorkflow({
   name: "audit-direct",
@@ -30,7 +30,7 @@ export default defineWorkflow({
     }
     await Promise.allSettled(chains);
 
-    if (ctx.params.sandbox_cfg) await runExpBuild(ctx, init);
+    // exp-build 已从所有 workflow 移除（fish 09-10：初始会话怎么准备还没想好，想好再恢复）
 
     const findings = (() => { try { return pending(ctx.workdir, "HYP").length; } catch { return 0; } })();
     ctx.report(`audit-direct 结束（剩余未消费 HYP：${findings}）`);

@@ -240,28 +240,7 @@ export default defineWorkflow({
         }
       }
 
-      // ---- exp-build 收尾：其它节点全部完成后执行；无新 exploits 产出即停 ----
-      for (;;) {
-        const exploitsDir = join(ctx.workdir, "exploits");
-        const before = existsSync(exploitsDir) ? readdirSync(exploitsDir).filter((d) => d.startsWith("EXP-")).length : 0;
-        // 组合信号：ev-assess 完成（exp_status 非 pending）的 vulnerability ≥ 2
-        const { readFileSync } = await import("node:fs");
-        const findingsDir = join(ctx.workdir, "findings");
-        if (!existsSync(findingsDir)) { ctx.report("无 findings，跳过 exp-build"); break; }
-        let evDone = 0;
-        for (const d of readdirSync(findingsDir)) {
-          const rp = join(findingsDir, d, "report.yaml");
-          if (!existsSync(rp)) continue;
-          const txt = readFileSync(rp, "utf-8");
-          if (/finding_class:\s*vulnerability/.test(txt) && /exp_status:\s*(confirmed|downgraded)/.test(txt)) evDone++;
-        }
-        if (evDone < 2) { ctx.report(`组合信号不足（已完成评估的 vulnerability：${evDone}），跳过 exp-build`); break; }
-        ctx.report("exp-build 启动");
-        const r = await ctx.node("exp-build", { task: "exp-build 任务，探索并构造漏洞组合。" });
-        if (r.aborted) { ctx.report("API 不可用，workflow 中止。"); return; }
-        const after = existsSync(exploitsDir) ? readdirSync(exploitsDir).filter((d) => d.startsWith("EXP-")).length : 0;
-        if (after <= before) { ctx.report("exp-build 无新 exploits 产出，停止"); break; }
-      }
+      // ---- exp-build 收尾：已从所有 workflow 移除（fish 09-10：初始会话准备方式未定，恢复时查 git 历史） ----
     }
 
     // ---- 门禁收尾 ----
