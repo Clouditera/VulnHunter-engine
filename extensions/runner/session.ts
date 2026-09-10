@@ -65,6 +65,7 @@ export function loadTaskBook(engineDir: string, name: string): string {
 export function buildPrompt(ctx: SessionCtx, agentName: string, task: string, extra?: string): string {
   const head = [
     `工作区根目录：${ctx.workdir}（任务里的产物相对路径——leads/ todo/ findings/ 等——都以它为基准）`,
+    `引擎仓库根目录：${ctx.engineDir}（任务书提到的 skills/ 等引擎侧相对路径以它为基准，不是目标项目目录）`,
     ctx.params.sandbox_cfg ? `沙箱连接配置：${ctx.params.sandbox_cfg}` : "",
     ctx.params.vuln_focus ? `漏洞关注方向：${ctx.params.vuln_focus}` : "",
     ctx.params.output_lang ? `输出语言：${ctx.params.output_lang}` : "输出语言：zh-CN",
