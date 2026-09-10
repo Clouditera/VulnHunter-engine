@@ -39,10 +39,15 @@ export interface SessionHandle {
   prompt(text: string, marks?: { start?: string; done?: string }): Promise<{ aborted: boolean }>;
   /** 纯打标记（当前叶子位置） */
   mark(label: string): void;
+  /** 当前上下文占用百分比（pi getContextUsage；未知返回 null） */
+  contextPercent(): number | null;
+  /** 引导式树摘要：从当前叶摘要回 mark 节点（全程覆盖、无 keep-recent 窗口）。
+   *  摘要结构遵循 fish 09-10 规则：xxx-start 任务定义 + 执行完成事实 + 核心论据与结论，丢弃中间细节。 */
   /** 压缩当前上下文（独立动词） */
   compact(instructions?: string): Promise<void>;
   /** 回到标记点；summarize=true 时离开的分支留摘要（分支往返） */
   goto(label: string, opts?: { summarize?: boolean; customInstructions?: string; summaryLabel?: string }): Promise<void>;
+  summarizeTo(label: string, opts: { summaryLabel: string; guide?: string }): Promise<void>;
   /** 提取当前路径成独立会话，返回新 handle（并发链用）；agent/binding 可换（会话历史与工具集正交） */
   fork(id: string, agent?: string, binding?: FnBinding): Promise<SessionHandle>;
   /** hunt 覆盖率记录开关（init 宿主只在 hunt 轮次期间打开，口径=hunt 精读） */
@@ -113,6 +118,11 @@ async function createSession(ctx: SessionCtx, agentName: string, binding: FnBind
   return { sess: session, spec, customTools };
 }
 
+/** 摘要结构模板（fish 09-10）：start 任务定义 + 完成事实 + 核心论据结论，丢中间细节 */
+export const SUMMARY_SHAPE = `摘要格式要求（必须遵守）：
+1. 被摘要区间内每个任务/轮次都按「任务定义（start 处的目标）→ 执行完成的事实（产物编号清单、裁决/结论）→ 核心论据（关键判断与代码锚点 file:line）」记录；
+2. 丢弃中间推演过程、重复代码细节、试错与回退。`;
+
 /** 开启（或复活）一个节点会话 */
 export async function startSession(ctx: SessionCtx, opts: {
   agent: string;
@@ -170,6 +180,15 @@ export async function startSession(ctx: SessionCtx, opts: {
           pending = "上一次执行因平台错误中断。请核对工作区现状，从未完成处继续。";
         }
       }
+    },
+
+    contextPercent(): number | null {
+      return (sess as any).getContextUsage?.()?.percent ?? null;
+    },
+
+    async summarizeTo(label: string, opts2: { summaryLabel: string; guide?: string }) {
+      const instr = SUMMARY_SHAPE + (opts2.guide ? `\n\n相关性过滤：${opts2.guide}` : "");
+      await handle.goto(label, { summarize: true, summaryLabel: opts2.summaryLabel, customInstructions: instr });
     },
 
     mark(label: string) {

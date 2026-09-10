@@ -84,9 +84,16 @@ const liteWorkflow = defineStagedWorkflow({
           const news = hypFiles(ctx).filter((f) => !before.has(f));
           (s.state.data.roundHyps ??= {})[rn] = news;
           s0.mark(`${rn}-done[init${sigmaPrev.length ? "," + sigmaPrev.join(",") : ""},${mine}][+${news.length}HYP]`);
-          if (r0 < rounds) {
-            await s0.goto("hunt-start", { summarize: true, summaryLabel: `Σhunt${r0}`, customInstructions: COMPACT_ROUND });
-          } else {
+          // hunt 积累制（fish 09-10）：每 5 轮或上下文占用 >75% 才整体摘要化；否则原文积累
+          const pct = s0.contextPercent();
+          if (r0 < rounds && (r0 % 5 === 0 || (pct !== null && pct > 75))) {
+            ctx.report(`hunt 触发整体摘要（第 ${r0} 轮，占用 ${pct === null ? "未知" : pct.toFixed(0) + "%"}）`);
+            await s0.summarizeTo("hunt-start", {
+              summaryLabel: `Σhunt1-${r0}`,
+              guide: "这是多轮 hunt（风险假设挖掘）的历史。保留：各轮产出的全部 HYP 编号+一句话主张+关键锚点；各轮读过的代码区域。",
+            });
+          }
+          if (r0 === rounds) {
             s0.mark(`hunt-end[init,${sigmaPrev.join(",")}][+${hypFiles(ctx).length}HYP]`);
           }
           s0.setCoverage(false);

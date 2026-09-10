@@ -126,6 +126,8 @@ export async function runHuntRounds(ctx: LibCtx, init: SessionHandle, opts: Hunt
 
   init.mark("hunt-start");
   init.setCoverage(true);   // hunt 轮次期间记录覆盖率（口径=hunt 精读）
+  // hunt 积累制（fish 09-10）：各轮原文积累，每 5 轮或上下文占用 >75% 时才把历史所有 hunt 一次性摘要化
+  let lastSum = 0;   // 摘要已覆盖到第几轮
   for (let round = 1; round <= maxRounds; round++) {
     if (stopOnCov && coverageMet(ctx) === true) { ctx.report("覆盖达标，hunt 停轮"); break; }
     const before = countHyps(ctx.workdir);
@@ -138,14 +140,18 @@ export async function runHuntRounds(ctx: LibCtx, init: SessionHandle, opts: Hunt
     ctx.report(`hunt 第 ${round}/${maxRounds} 轮`);
     const r = await init.prompt(buildPrompt(ctx, "hunt", `hunt 任务第 ${round} 轮。${angle} 尽可能挖掘风险假设（HYP）；与已有 HYP 重复的不提，确认没有新东西就明说。`));
     if (r.aborted) { ctx.report("API 不可用，workflow 中止。"); return false; }
-    // 分支往返：回到起点，本轮摘要留在会话里（下一轮继承，保持连续性）
-    await init.goto("hunt-start", {
-      summarize: true,
-      summaryLabel: `hunt-r${round}`,
-      customInstructions: "只保留本轮新提出的 HYP 标题+一句话主张+关键锚点行号，以及读过的代码区域清单；丢弃推演过程。",
-    });
     const produced = countHyps(ctx.workdir) - before;
+    init.mark(`hunt${round}-done`);
     ctx.report(`hunt 第 ${round} 轮结束：新增 ${produced} 条 HYP`);
+    const pct = init.contextPercent();
+    if (round < maxRounds && (round % 5 === 0 || (pct !== null && pct > 75))) {
+      ctx.report(`hunt 触发整体摘要（第 ${round} 轮，占用 ${pct === null ? "未知" : pct.toFixed(0) + "%"}）`);
+      await init.summarizeTo("hunt-start", {
+        summaryLabel: `Σhunt1-${round}`,
+        guide: "这是多轮 hunt（风险假设挖掘）的历史。保留：各轮产出的全部 HYP 编号+一句话主张+关键锚点；各轮读过的代码区域。",
+      });
+      lastSum = round;
+    }
     if (stopOnZero && produced === 0) { ctx.report("本轮零新增，hunt 停轮"); break; }
   }
   init.setCoverage(false);
@@ -190,10 +196,15 @@ export async function runHypChain(ctx: LibCtx, init: SessionHandle, hypFile: str
       chain = await init.fork(`init/${roundShort}/chain-${hypId}`, "hyp-chain", { hypId });
     } finally { unlock(); }
     try {
-      // 启动 compact（fish 09-09：HYP 的初始会话启动时执行）
-      try { await chain.compact(`保留：本次研判对象 = ${hypId}（它的主张/锚点/相关代码细节与推理，重点保留）；此前各轮 hunt 产出的全部 HYP 编号+一句话主张清单（逐条列明，含已被排除/确认的结论）；项目画像与构建要点；产物操作约定（artifact 工具 create/query/update，编号由工具分配）。丢弃：无关代码细节与推演过程。`); }
-      catch (e) { ctx.report(`${hypId} 启动 compact 跳过（${String(e).includes("too small") ? "上下文过小" : String(e).slice(0, 60)}）`); }
-      const ing = opts.birthIngredients ?? "Σ(init)";
+      // 启动引导式树摘要（fish 09-10）：init→出生轮 huntN-done 全程覆盖压缩，HYP 正文做相关性过滤；取代旧线性 compact（keep-recent 窗口导致摘要过期）
+      const hypBody = readFileSync(join(ctx.workdir, "todo", hypFile), "utf-8").slice(0, 4000);
+      try {
+        await chain.summarizeTo("init", {
+          summaryLabel: `Σ(init..${roundShort})·${hypShort}`,
+          guide: `本次摘要服务于后续对这条 HYP 的研判。研判对象全文：\n${hypBody}\n与它相关的代码细节、锚点与推理重点保留；无关的代码区域与过程丢弃。另外保留：此前各轮 hunt 产出的全部 HYP 编号+一句话主张清单；产物操作约定（artifact 工具，编号自动分配）。`,
+        });
+      } catch (e) { ctx.report(`${hypId} 启动摘要跳过（${String(e).slice(0, 60)}）`); }
+      const ing = opts.birthIngredients ?? `Σ(init..${roundShort})`;
       // 有沙箱 → dynamic-verify（研判+复现合并）；无沙箱 → static-verify（纯静态裁决，fish 09-10）
       const dynamicMode = opts.dynamic ?? !!ctx.params.sandbox_cfg;
       const stageCode = dynamicMode ? "dv" : "sv";
