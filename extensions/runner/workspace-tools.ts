@@ -232,6 +232,7 @@ function makeUpdateFinding(ws: WsContext): ToolDefinition {
       poc_status: Type.Optional(Type.Union([Type.Literal("pending"), Type.Literal("reproduced"), Type.Literal("fail-reproduced"), Type.Literal("blocked"), Type.Literal("not-needed")])),
       poc_evidence: Type.Optional(Type.String({ description: "复现证据（现象/日志摘要）" })),
       exp_status: Type.Optional(Type.Union([Type.Literal("pending"), Type.Literal("reproduced"), Type.Literal("fail-reproduced"), Type.Literal("blocked"), Type.Literal("not-needed")])),
+      ev_vector: Type.Optional(Type.String()),
       ev_score: Type.Optional(Type.Number()),
       ev_priority: Type.Optional(Type.Union([Type.Literal("P0"), Type.Literal("P1"), Type.Literal("P2"), Type.Literal("P3")])),
       ev_rationale: Type.Optional(Type.String()),
@@ -261,7 +262,7 @@ function makeUpdateFinding(ws: WsContext): ToolDefinition {
         if (params.finding_class === "risk") { md.poc_status = "not-needed"; md.exp_status = "not-needed"; }
         changed.push("finding_class");
       }
-      for (const k of ["poc_evidence", "ev_score", "ev_priority", "ev_rationale"] as const) {
+      for (const k of ["poc_evidence", "ev_vector", "ev_score", "ev_priority", "ev_rationale"] as const) {
         if (params[k] !== undefined) { md[k] = params[k]; changed.push(k); }
       }
       if (!changed.length) return err("未提供任何待更新字段。");

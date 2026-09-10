@@ -63,20 +63,20 @@ const SPECS: Record<string, TypeSpec> = {
       title: { type: "string", required: true, desc: "受影响功能(业务职责称呼)+漏洞类型+后果" },
       vuln_type: { type: "string", required: true, desc: "类型简写（sqli/cmdi/bof/uaf/path/deser/…）" },
       finding_class: { type: "string", required: true, enum: ["vulnerability", "risk"], desc: "vulnerability=正式漏洞；risk=前提苛刻/影响有限/弱点" },
-      cwe: { type: "array<string>", required: true, example: ["CWE-121"] },
+      cwe: { type: "array<string>", required: true, desc: "CWE 编号列表", example: ["CWE-121"] },
       cvss_vector: { type: "string", required: true, desc: "CVSS v3.1 向量" },
-      cvss_score: { type: "number", required: true },
-      ev_vector: { type: "string", required: true },
-      ev_score: { type: "number", required: true },
+      cvss_score: { type: "number", required: true, desc: "CVSS v3.1 基础分" },
+      ev_vector: { type: "string", required: true, desc: "EV（漏洞利用价值评估）向量" },
+      ev_score: { type: "number", required: true, desc: "EV 评分" },
       ev_priority: { type: "string", required: true, enum: ["P0", "P1", "P2", "P3"] },
-      ev_rationale: { type: "string", required: true, desc: "EV 逐维度判断依据" },
-      affected_versions: { type: "string", required: true, desc: "未知写 unknown" },
+      ev_rationale: { type: "string", required: true, desc: "EV 逐维度判断依据（exploitability/价值 逐维写明）" },
+      affected_versions: { type: "string", required: true, desc: "受影响版本范围；未知写 unknown" },
       summary: { type: "string", required: true, desc: "概览：一段读懂（缺陷位置/触发/后果/前提）" },
       background: { type: "string", required: true, desc: "业务背景" },
       dataflow: { type: "array<object>", required: true, desc: "{step, location(file:line), function?, role?(source/propagation/sink), snippet(逐字复制真实代码), description, flaw?}" },
       reproduction: { type: "object", desc: "{medium, preconditions[], request, payload_variants[], success_condition, notes}" },
       fix_patch: { type: "string", desc: "diff --git 开头的最小 unified diff；无法安全给出时省略" },
-      references: { type: "array<string>", required: true },
+      references: { type: "array<string>", required: true, desc: "参考链接/依据列表" }
     },
     notes: "仅当前 HYP 裁决 confirmed 时 create。编号继承（BUG-<链>）。finding_class=vulnerability 时 poc_status/exp_status 自动置 pending，risk 时 not-needed。",
   },
@@ -164,18 +164,23 @@ function renderSpec(type: string): string {
 function queryArtifact(ws: WsContext, type: string, id?: string, fields?: Record<string, unknown>) {
   if (type === "coverage") return queryCoverage(ws, fields ?? {});
   if (id) {
-    const p = type === "finding"
-      ? join(ws.workdir, "findings", id, "report.yaml")
-      : join(ws.workdir, "leads", id.endsWith(".md") ? id : `${id}.md`);
-    if (!existsSync(p)) return errT(`未找到 ${type} ${id}（${p}）`);
-    return okT(readFileSync(p, "utf-8"));
+    if (type === "finding") {
+      const p = join(ws.workdir, "findings", id, "report.yaml");
+      if (!existsSync(p)) return errT(`未找到 finding ${id}（${p}）`);
+      return okT(readFileSync(p, "utf-8"));
+    }
+    for (const q of ["leads", "todo", "done"]) {   // 产物会被 workflow 在队列间流转，三处都搜
+      const p = join(ws.workdir, q, id.endsWith(".md") ? id : `${id}.md`);
+      if (existsSync(p)) return okT(readFileSync(p, "utf-8") + `\n\n（位置：${q}/）`);
+    }
+    return errT(`未找到 ${type} ${id}（已搜 leads/todo/done 三个队列目录）`);
   }
-  // 列队：leads/todo/done 三目录该 type 的文件名
+  // 列队：leads/todo/done 三目录（直接在 workdir 下）该 type 的文件名
   const prefix = { hyp: "HYP-", lead: "LEAD-", adv: "ADV-", finding: "BUG-" }[type];
   if (!prefix) return errT(`query 不支持 type=${type}（可指定 id 定点读 finding，或列 hyp/lead/adv）`);
   const lines: string[] = [];
   for (const q of ["leads", "todo", "done"]) {
-    const dir = q === "leads" ? join(ws.workdir, "leads") : join(ws.workdir, "queues", q);
+    const dir = join(ws.workdir, q);
     const files = existsSync(dir) ? readdirSync(dir).filter((f) => f.startsWith(prefix)) : [];
     if (files.length) lines.push(`${q}: ${files.join(", ")}`);
   }
@@ -223,14 +228,18 @@ export function makeArtifactTool(ws: WsContext, binding: FnBinding, nodeId?: str
       "审计产物统一管理。产物 type：profiler/build-state/wiki/adv/lead/hyp/finding/coverage/exploit。" +
       "op：query（读）/ create（新建）/ update（更新）/ spec（查字段规格）/ list（列可用操作）。" +
       "不确定某类产物的字段时先 artifact({op:\"spec\", type:\"<类型>\"})。产出只走本工具，落盘后不要自行删除。",
+    // 顶层全 optional：schema 校验不进 pi 的 ajv（它的报错对模型无诊断性），自检在 execute 内做教学化报错
     parameters: Type.Object({
-      op: Type.Union([Type.Literal("query"), Type.Literal("create"), Type.Literal("update"), Type.Literal("spec"), Type.Literal("list")]),
+      op: Type.Optional(Type.String({ description: "query/create/update/spec/list 之一" })),
       type: Type.Optional(Type.String({ description: "产物类型（query/create/update/spec 必填）" })),
-      id: Type.Optional(Type.String({ description: "目标产物编号（update / 定点 query 用）" })),
+      id: Type.Optional(Type.String({ description: "目标产物编号（update / 定点 query 用）——顶层参数，不放 fields" })),
       fields: Type.Optional(Type.Unsafe<Record<string, unknown>>({ type: "object", additionalProperties: true, description: "载荷，字段规格见 spec" })),
     }),
     async execute(_id, params) {
       const { op } = params;
+      if (!op || !["query", "create", "update", "spec", "list"].includes(op)) {
+        return errT(`参数缺失/非法：本工具收到的顶层键 = [${Object.keys(params).join(", ") || "（空）"}]；需要 op（必填）+ type + fields。正确示例：artifact({op:"create", type:"hyp", fields:{body:"…"}})`);
+      }
       const type = params.type ?? "";
       const fields = params.fields ?? {};
 
@@ -269,7 +278,7 @@ export function makeArtifactTool(ws: WsContext, binding: FnBinding, nodeId?: str
           return makeEmitFinding(ws, binding.hypId).execute("", fields as never, undefined, undefined, undefined as never);
         }
         case "update finding": {
-          if (!params.id) return errT(`update finding 需要 id。\n${renderSpec("finding.update")}`);
+          if (!params.id) return errT(`update finding 需要顶层参数 id（不放 fields 里）：artifact({op:"update", type:"finding", id:"BUG-xxx", fields:{...}})。\n${renderSpec("finding.update")}`);
           return makeUpdateFinding(ws).execute("", { id: params.id, ...fields } as never, undefined, undefined, undefined as never);
         }
         case "update build-state":
