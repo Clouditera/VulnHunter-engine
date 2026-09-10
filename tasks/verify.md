@@ -9,6 +9,7 @@
 - 读任务正文给定的 HYP，按其主张、锚点与边界聚焦。
 - 沿攻击者视角走一遍：source → 传播 → 校验 → 状态 → sink 能否连成可解释的路径，关键判断落到代码锚点。可行性存疑时，依据代码性质具体推导（匹配算法、数据结构、协议字段的实际性质），让结论落在代码事实上。
 - 对照口径：读 `knowledge/vuln-policy.md`（onboard 初版 + research online 增量）。口径资料明确把这类问题定性为允许存在的（by-design、文档化缓解、安全策略排除），则 `finding_class` 置 risk。
+- 保守口径：只有确认不可达、攻击者前提不符合威胁模型或找到有效防护时才判 refuted；静态无法确定不构成证伪理由——可疑但证不了的保留为 confirmed 或 `risk`，并在 finding 的 summary 中标注置信度。可达性依赖目标外组件行为（如浏览器、中间件）的尤其照此处理，不要长篇摇摆。
 - 成立 → 用 `artifact create finding` 落 finding，并把研判追加进 HYP 正文（edit）。
 - 不成立 → 把研判理由写回 HYP 正文（edit），如实收尾；缺陷本身存在但当前路径不可达的，用 `artifact create lead`（type=hunt）保留追踪点。
 

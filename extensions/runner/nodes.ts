@@ -44,6 +44,16 @@ export const NODES: Record<string, NodeSpec> = {
     skills: ["bug-report", "wiki-maintainer"],
     extensions: ["pi-web-access"],                    // 政策核验的在线查证
   },
+  /** static-verify：无沙箱时的纯静态裁决（fish 09-10） */
+  "static-verify": {
+    skills: ["bug-report", "wiki-maintainer"],
+    extensions: ["pi-web-access"],
+  },
+  /** dynamic-verify：有沙箱时研判+复现合并（fish 09-10） */
+  "dynamic-verify": {
+    skills: ["bug-report", "wiki-maintainer"],
+    extensions: ["pi-web-access"],
+  },
   /** HYP 链节点（verify→poc-verify→ev-assess 同会话）：函数取三阶段并集（fish 09-05 最简 run） */
   "hyp-chain": {
     skills: ["bug-report", "wiki-maintainer"],

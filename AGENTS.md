@@ -63,7 +63,7 @@
 
 ## 任务与线索流转
 
-任务与线索文件由系统统一管理，状态与流转（待处理 → 处理中 → 完成）由系统维护。节点按任务正文读取本次对象；结构化产物经 `artifact` 元工具落盘（op+type+fields；emit_*/update_* 已收编为其 create/update 操作），散文产物用 write/edit 写入。
+任务与线索文件由系统统一管理，状态与流转（待处理 → 处理中 → 完成）由系统维护。产物在 `leads/`（待消费）→ `todo/`（处理中）→ `done/`（完成）间由系统流转；看到 `todo/` 里的产物说明它正在被处理。节点按任务正文读取本次对象；结构化产物经 `artifact` 元工具落盘（op+type+fields；emit_*/update_* 已收编为其 create/update 操作），散文产物用 write/edit 写入。
 
 # 工作区
 

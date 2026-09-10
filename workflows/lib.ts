@@ -194,26 +194,31 @@ export async function runHypChain(ctx: LibCtx, init: SessionHandle, hypFile: str
       try { await chain.compact("保留：当前研判 HYP 的主张/锚点/相关代码细节与推理、项目画像与构建要点；丢弃无关过程。"); }
       catch (e) { ctx.report(`${hypId} 启动 compact 跳过（${String(e).includes("too small") ? "上下文过小" : String(e).slice(0, 60)}）`); }
       const ing = opts.birthIngredients ?? "Σ(init)";
-      const r = await chain.prompt(buildPrompt(ctx, "verify", "verify 任务，研判风险假设的成立性。", `风险假设：todo/${hypFile}`),
-        { start: `ve(${hypShort})-start[${ing}]` });
+      // 有沙箱 → dynamic-verify（研判+复现合并）；无沙箱 → static-verify（纯静态裁决，fish 09-10）
+      const dynamicMode = opts.dynamic ?? !!ctx.params.sandbox_cfg;
+      const stageCode = dynamicMode ? "dv" : "sv";
+      const book = dynamicMode ? "dynamic-verify" : "static-verify";
+      const r = await chain.prompt(buildPrompt(ctx, book, `${book} 任务，研判风险假设的成立性。`, `风险假设：${ctx.workdir}/todo/${hypFile}`),
+        { start: `${stageCode}(${hypShort})-start[${ing}]` });
       if (r.aborted) { ctx.report(`${hypId}：API 不可用，链中止`); backToLeads(ctx.workdir, hypFile); return; }
       if (!existsSync(bugDir)) {
-        chain.mark(`ve(${hypShort})-done[${ing},ve(${hypShort})][+refuted]`);
+        chain.mark(`${stageCode}(${hypShort})-done[${ing},${stageCode}(${hypShort})][+refuted]`);
         ctx.report(`裁决：${hypId} → refuted`); toDone(ctx.workdir, hypFile); return;
       }
-      chain.mark(`ve(${hypShort})-done[${ing},ve(${hypShort})][+BUG-${hypShort}·confirmed]`);
+      chain.mark(`${stageCode}(${hypShort})-done[${ing},${stageCode}(${hypShort})][+BUG-${hypShort}·confirmed]`);
       ctx.report(`裁决：${hypId} → confirmed（finding 已产出）`);
 
-      if (dynamic && readSandboxState(ctx.workdir) === "available") {
+      if (dynamicMode && readSandboxState(ctx.workdir) === "available") {
         await opts.sandboxPool.run(async () => {
           const target = `findings/${hypId.replace(/^HYP-/, "BUG-")}/report.yaml`;
-          const r2 = await chain.prompt(buildPrompt(ctx, "poc-verify", "poc-verify 任务，在沙箱中复现 finding。", `目标 finding：${target}`));
-          if (r2.aborted) { ctx.report(`${hypId}：poc-verify API 中止`); return; }
+          // dynamic-verify 已含复现；这里只判 ev 门槛（poc reproduced 且 exp pending）后接 ev-assess
           const rp = join(bugDir, "report.yaml");
           const txt = existsSync(rp) ? readFileSync(rp, "utf-8") : "";
           if (/poc_status:\s*reproduced/.test(txt) && /exp_status:\s*pending/.test(txt)) {
-            const r3 = await chain.prompt(buildPrompt(ctx, "ev-assess", "ev-assess 任务，评估 finding 在真实业务场景下的影响。", `目标 finding：${target}`));
-            if (r3.aborted) ctx.report(`${hypId}：ev-assess API 中止`);
+            const r3 = await chain.prompt(buildPrompt(ctx, "ev-assess", "ev-assess 任务，评估 finding 在真实业务场景下的影响。", `目标 finding：${target}`),
+              { start: `ev(${hypShort})-start[${ing},${stageCode}(${hypShort}),finding]` });
+            if (!r3.aborted) chain.mark(`ev(${hypShort})-done[Σ,${stageCode}(${hypShort}),ev(${hypShort})][+EV 已评]`);
+            else ctx.report(`${hypId}：ev-assess API 中止`);
           }
         });
       }
