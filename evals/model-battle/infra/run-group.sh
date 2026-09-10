@@ -3,7 +3,7 @@
 set -uo pipefail
 IMAGE=$1; VER=$2; MODEL=$3; CASES=$4
 OUT=~/vulnforge-eval/out/phase-a/$MODEL
-ENGINE=~/vulnforge-eval/engine
+ENGINE=~/vulnforge-eval/engine-frozen
 NAME="eval-a-${VER}-${MODEL}-$(date +%H%M)"
 docker rm -f "$NAME" >/dev/null 2>&1
 docker run -d --name "$NAME" \

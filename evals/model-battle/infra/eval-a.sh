@@ -4,7 +4,7 @@
 set -uo pipefail
 OUT=~/vulnforge-eval/out/phase-a
 mkdir -p "$OUT"
-ENGINE=~/vulnforge-eval/engine
+ENGINE=~/vulnforge-eval/engine-frozen
 
 MODELS=(glm-5.2 glm-5.3 glm-5.3-flash deepseek-v4-flash)
 PARALLEL=${1:-3}

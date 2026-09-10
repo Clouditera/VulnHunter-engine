@@ -4,7 +4,8 @@ import { readFileSync, writeFileSync } from "node:fs";
 const engineDir = "/home/lhy/dev/llm/VulnHunter-engine";
 const cwd = "/tmp/lite-target";
 
-const workflow = (await import(`${engineDir}/.dist/workflows/audit-lite.js`)).default;
+const mod = await import(`${engineDir}/.dist/workflows/audit-lite.js`);
+const run = mod.run;
 
 const ctx = {
   cwd,
@@ -16,7 +17,7 @@ const ctx = {
 
 const t0 = Date.now();
 try {
-  await workflow.run(ctx);
+  await run(ctx);
   console.log(`=== audit-lite 完成，耗时 ${((Date.now() - t0) / 60000).toFixed(1)} 分钟 ===`);
 } catch (e) {
   console.error("=== 异常 ===", e);
