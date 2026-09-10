@@ -78,7 +78,7 @@ const liteWorkflow = defineStagedWorkflow({
           s0.setCoverage(true);
           const before = new Set(hypFiles(ctx));
           const angle = r0 === 1 ? "系统性通读范围内的代码，沿真实数据流挖掘" : r0 === 2 ? "换角度：边界条件、整数/长度运算、编码转换细节" : "换角度：跨函数状态组合、契约缝隙";
-          const r = await s0.prompt(`hunt 任务（第 ${r0} 轮，共 ${rounds} 轮）。${angle}，尽可能挖掘风险假设（HYP），每条落到具体 file:line；与前几轮已提的重复不提。确认没有新东西就明说。`,
+          const r = await s0.prompt(buildPrompt(ctx, "hunt", `hunt 任务（第 ${r0} 轮，共 ${rounds} 轮）。${angle}，尽可能挖掘风险假设（HYP），每条落到具体 file:line；与前几轮已提的重复不提。确认没有新东西就明说。`),
             { start: `${rn}-start[init${sigmaPrev.length ? "," + sigmaPrev.join(",") : ""}]` });
           if (r.aborted) throw new Error("API 不可用");
           const news = hypFiles(ctx).filter((f) => !before.has(f));

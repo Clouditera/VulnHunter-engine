@@ -191,7 +191,7 @@ export async function runHypChain(ctx: LibCtx, init: SessionHandle, hypFile: str
     } finally { unlock(); }
     try {
       // 启动 compact（fish 09-09：HYP 的初始会话启动时执行）
-      try { await chain.compact("保留：当前研判 HYP 的主张/锚点/相关代码细节与推理、项目画像与构建要点；丢弃无关过程。"); }
+      try { await chain.compact(`保留：本次研判对象 = ${hypId}（它的主张/锚点/相关代码细节与推理，重点保留）；此前各轮 hunt 产出的全部 HYP 编号+一句话主张清单（逐条列明，含已被排除/确认的结论）；项目画像与构建要点；产物操作约定（artifact 工具 create/query/update，编号由工具分配）。丢弃：无关代码细节与推演过程。`); }
       catch (e) { ctx.report(`${hypId} 启动 compact 跳过（${String(e).includes("too small") ? "上下文过小" : String(e).slice(0, 60)}）`); }
       const ing = opts.birthIngredients ?? "Σ(init)";
       // 有沙箱 → dynamic-verify（研判+复现合并）；无沙箱 → static-verify（纯静态裁决，fish 09-10）

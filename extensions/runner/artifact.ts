@@ -45,7 +45,7 @@ const SPECS: Record<string, TypeSpec> = {
   hyp: {
     ops: ["create", "query"],
     fields: {
-      body: { type: "string(md)", required: true, desc: "HYP 正文。约定含：漏洞主张/代码锚点(file:line)/风险类型/提出原因。编号继承当前审计链路。" },
+      body: { type: "string(md)", required: true, desc: "HYP 正文。约定含：漏洞主张/代码锚点(file:line)/风险类型/提出原因。编号由工具自动分配（HYP-<来源>-H<n>），创建返回值为准；正文标题不要自写编号（引用其他 HYP 时用返回的正式编号）。" },
     },
     example: { op: "create", type: "hyp", fields: { body: "## 漏洞主张\nXACKDEL 静态数组栈溢出…\n**代码锚点**：src/t_stream.c:1234" } },
   },
@@ -61,14 +61,14 @@ const SPECS: Record<string, TypeSpec> = {
     ops: ["create", "update", "query"],
     fields: {
       title: { type: "string", required: true, desc: "受影响功能(业务职责称呼)+漏洞类型+后果" },
-      vuln_type: { type: "string", required: true, desc: "类型简写（sqli/cmdi/bof/uaf/path/deser/…）" },
+      vuln_type: { type: "string", required: true, desc: "类型简写（sqli/cmdi/bof/oob-read/oob-write/uaf/null-deref/int-overflow/path/deser/…；可自由扩展，建议对齐 CWE 名）" },
       finding_class: { type: "string", required: true, enum: ["vulnerability", "risk"], desc: "vulnerability=正式漏洞；risk=前提苛刻/影响有限/弱点" },
       cwe: { type: "array<string>", required: true, desc: "CWE 编号列表", example: ["CWE-121"] },
       cvss_vector: { type: "string", required: true, desc: "CVSS v3.1 向量" },
       cvss_score: { type: "number", required: true, desc: "CVSS v3.1 基础分" },
-      ev_vector: { type: "string", required: true, desc: "EV（漏洞利用价值评估）向量" },
+      ev_vector: { type: "string", required: true, desc: 'EV 向量，格式 EV:1.0/R:{N|P}/E:{D|S}/C:{D|X}/I:{D|X}（Reachability/Exposure/Certainty/Impact）；评分流程与口径见 skills/bug-report/SKILL.md + exploit-value-guide.md，用 python3 skills/bug-report/cvss-calc.py 计算，禁止手算' },
       ev_score: { type: "number", required: true, desc: "EV 评分" },
-      ev_priority: { type: "string", required: true, enum: ["P0", "P1", "P2", "P3"] },
+      ev_priority: { type: "string", required: true, enum: ["P0", "P1", "P2", "P3"], desc: "处置优先级：P0=立即修（可远程无前提利用）/P1=高/P2=中/P3=低，口径见 bug-report 技能" },
       ev_rationale: { type: "string", required: true, desc: "EV 逐维度判断依据（exploitability/价值 逐维写明）" },
       affected_versions: { type: "string", required: true, desc: "受影响版本范围；未知写 unknown" },
       summary: { type: "string", required: true, desc: "概览：一段读懂（缺陷位置/触发/后果/前提）" },
@@ -130,6 +130,7 @@ const TYPE_LIST = Object.entries(SPECS)
 
 // ---------------------------------------------------------------------------
 // 校验（教学化报错：缺什么 + 正确示例）
+const EV_RE = /^EV:\d+\.\d+\/R:[A-Z]\/(E|S|..?):.{1,3}\//;  // 粗校验：必须是 EV:x.y/R:?/... 结构化向量
 // ---------------------------------------------------------------------------
 
 function validateFields(type: string, fields: Record<string, unknown>): string | null {
@@ -142,18 +143,27 @@ function validateFields(type: string, fields: Record<string, unknown>): string |
     if (fs.required && v === undefined) missing.push(name);
     if (v !== undefined && fs.enum && !fs.enum.includes(String(v))) badEnum.push(`${name} 仅允许 ${fs.enum.join("/")}（收到 ${JSON.stringify(v)}）`);
   }
-  if (!missing.length && !badEnum.length) return null;
+  const badFormat: string[] = [];
+  const evv = fields.ev_vector;
+  if (evv !== undefined && !EV_RE.test(String(evv))) badFormat.push(`ev_vector 必须是结构化向量 EV:1.0/R:{N|P}/E:{D|S}/C:{D|X}/I:{D|X}（收到 ${JSON.stringify(evv)}）；评分流程见 skills/bug-report/SKILL.md`);
+  if (!missing.length && !badEnum.length && !badFormat.length) return null;
   const parts = [];
   if (missing.length) parts.push(`缺必填字段：${missing.join(", ")}`);
   if (badEnum.length) parts.push(`枚举越界：${badEnum.join("；")}`);
-  return `${parts.join("；")}。\n该 type 的权威规格：\n${renderSpec(type)}\n正确示例：\n${JSON.stringify(spec.example ?? {}, null, 1)}`;
+  if (badFormat.length) parts.push(`格式不符：${badFormat.join("；")}`);
+  // 字段级示例：优先 spec.example，缺失字段给逐字段提示，避免空 {}
+  const fieldHints = missing.map((n) => {
+    const fs = (spec.fields ?? {})[n];
+    return `  ${n}: ${fs?.example !== undefined ? JSON.stringify(fs.example) : `<${fs?.type ?? "值"}>${fs?.desc ? "（" + fs.desc.slice(0, 40) + "）" : ""}`}`;
+  });
+  return `${parts.join("；")}。\n该 type 的权威规格：\n${renderSpec(type)}${fieldHints.length ? `\n缺失字段填法：\n${fieldHints.join("\n")}` : ""}${spec.example ? `\n完整示例：\n${JSON.stringify(spec.example, null, 1)}` : ""}`;
 }
 
 function renderSpec(type: string): string {
   const spec = SPECS[type] ?? SPECS[`${type}.update`];
   if (!spec) return `未知 type：${type}。可用：\n${TYPE_LIST}`;
   const lines = Object.entries(spec.fields ?? {}).map(([n, fs]) =>
-    `  ${n}: ${fs.type}${fs.required ? "（必填）" : ""}${fs.enum ? ` 枚举[${fs.enum.join("|")}]` : ""} — ${fs.desc}`);
+    `  ${n}: ${fs.type}${fs.required ? "（必填）" : ""}${fs.enum ? ` 枚举[${fs.enum.join("|")}]` : ""}${fs.desc ? ` — ${fs.desc}` : ""}`);
   return `${type}（${spec.ops.join("/")}）字段规格：\n${lines.join("\n")}${spec.notes ? `\n注意：${spec.notes}` : ""}`;
 }
 
