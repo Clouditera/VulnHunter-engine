@@ -213,7 +213,11 @@ function queryCoverage(ws: WsContext, fields: Record<string, unknown>) {
 // ---------------------------------------------------------------------------
 
 function okT(text: string) { return { content: [{ type: "text" as const, text }], details: {} }; }
-function errT(text: string) { return { content: [{ type: "text" as const, text }], details: {}, isError: true }; }
+function errT(text: string): never {
+  // pi-agent-core agent-loop.js:477 对正常返回的工具结果硬编码 isError:false（返回值里的 isError 字段被丢弃）；
+  // 只有 throw 才会以 isError:true 落盘。所以校验/用法错误一律抛（文本不变，模型看到的教学内容相同）。
+  throw new Error("ERROR: " + text);
+}
 
 /** 组装 artifact 元工具（每个节点会话恒定挂载） */
 export function makeArtifactTool(ws: WsContext, binding: FnBinding, nodeId?: string): ToolDefinition {
