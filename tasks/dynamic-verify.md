@@ -9,9 +9,12 @@
 ## 成立性研判
 
 - 读任务正文给定的 HYP，按其主张、锚点与边界聚焦。
+- HYP 正文中支撑前提的事实断言（格式能力、库行为等）需复核；不成立的，在研判追加中修正，不得原样带进 finding。
 - 沿攻击者视角走一遍：source → 传播 → 校验 → 状态 → sink 能否连成可解释的路径，关键判断落到代码锚点。可行性存疑时，依据代码性质具体推导（匹配算法、数据结构、协议字段的实际性质），让结论落在代码事实上。
 - 对照口径：读 `knowledge/vuln-policy.md`（onboard 初版 + research online 增量）。口径资料明确把这类问题定性为允许存在的（by-design、文档化缓解、安全策略排除），则 `finding_class` 置 risk。
-- 保守口径：只有确认不可达、攻击者前提不符合威胁模型或找到有效防护时才判 refuted；静态无法确定不构成证伪理由——可疑但证不了的保留为 confirmed 或 `risk`，并在 finding 的 summary 中标注置信度。可达性依赖目标外组件行为（如浏览器、中间件）的尤其照此处理，不要长篇摇摆。
+- 裁决轴：只有确认不可达、攻击者前提不符合威胁模型或找到有效防护时才判 refuted；静态无法确定不构成证伪理由——可疑但证不了的一律 confirmed（不证伪）。可达性依赖目标外组件行为（如浏览器、中间件）的尤其照此处理，不要长篇摇摆。
+- 分类轴：`finding_class` 按实际影响定 vulnerability / risk；凡结论依赖环境前提的 confirmed，summary 必须一句话注明前提 + 置信度。
+- 评分口径：`create finding` 前先读 `skills/bug-report/SKILL.md`；CVSS 与 EV 一律用 `python3 skills/bug-report/cvss-calc.py` 计算，禁止手算，向量与分数以脚本输出为准。
 - 成立 → 用 `artifact create finding` 落 finding，并把研判追加进 HYP 正文（edit）。
 - 不成立 → 把研判理由写回 HYP 正文（edit），如实收尾；缺陷本身存在但当前路径不可达的，用 `artifact create lead`（type=hunt）保留追踪点。
 
@@ -33,10 +36,11 @@
 
 # 备注
 
-- 成立分类：高危且路径成立 → `finding_class: vulnerability`，进入动态复现；利用前提苛刻、影响有限、价值不足或仅构成弱点 → `finding_class: risk`，不进动态复现。
+- 成立分类：高危且路径成立 → `finding_class: vulnerability`，进入动态复现；利用前提苛刻、影响有限、价值不足或仅构成弱点 → `finding_class: risk`，不进动态复现。触发前提在项目自带或默认部署配置下即满足的不算苛刻，可判 vulnerability；需非常规运维操作才成立的判 risk。
 - 复现成功的判据是异常来自 finding 声称的真实入口与真实路径；跑出异常本身不等于复现成功。
 - 复现失败与环境阻碍分开记录：复现失败记 fail-reproduced，环境阻碍记 blocked。
 - 对含存疑点的 finding，复现实验要覆盖存疑点并给出结论。
+- `fix_patch`：不确定 hunk 范围时以函数为单位给出替换说明，不要伪造 hunk 头行号。
 
 ## 产物操作
 

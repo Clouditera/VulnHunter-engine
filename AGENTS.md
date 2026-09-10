@@ -113,6 +113,7 @@ findings/
 
 - **信息脱敏**：对外产物只写目标项目本身，不写宿主绝对路径（如 `/home/xxx/...`），**不写审计流程、待办、线索等中间过程概念**。对外路径使用相对路径、脚本自定位路径或占位符，例如 `<poc-dir>`、`<project-src>`；容器内约定路径可以写。
 
+- **锚点核实**：写入任何产物的 `file:line` 锚点必须经 `grep -n` 核实——read 工具输出不带行号，心算偏移必漂。
 - **知识空白与威胁模型修正**：直接用 write/edit 更新 `knowledge/wiki/`、`knowledge/vuln-policy.md`。
 - **探测性 bash 命令加 `|| true`**（pgrep/grep/ls 多目录等"无结果即非零退出"的场景），非零退出码不等于执行错误，减少噪音报错。
 - **超出当前边界的信息写成回流线索**：发现新攻击面或值得继续追的线索时，用 `artifact create lead` 落回流线索（`type: research | hunt`），由系统路由处理。
