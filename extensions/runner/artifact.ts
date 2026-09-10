@@ -66,7 +66,7 @@ const SPECS: Record<string, TypeSpec> = {
       cwe: { type: "array<string>", required: true, desc: "CWE 编号列表", example: ["CWE-121"] },
       cvss_vector: { type: "string", required: true, desc: "CVSS v3.1 向量" },
       cvss_score: { type: "number", required: true, desc: "CVSS v3.1 基础分" },
-      ev_vector: { type: "string", required: true, desc: 'EV 向量，格式 EV:1.0/R:{N|P}/E:{D|S}/C:{D|X}/I:{D|X}（Reachability/Exposure/Certainty/Impact）；评分流程与口径见 skills/bug-report/SKILL.md + exploit-value-guide.md，用 python3 skills/bug-report/cvss-calc.py 计算，禁止手算' },
+      ev_vector: { type: "string", required: true, desc: 'EV 向量，格式 EV:1.0/R:{N|M|L|P}/E:{D|C|R|P}/C:{D|F|T}/I:{X|S|D}（Reachability/Exposure/Certainty/Impact，枚举值以 skills/bug-report/exploit-value-guide.md 为准）；用引擎仓 python3 skills/bug-report/cvss-calc.py 计算，禁止手算' },
       ev_score: { type: "number", required: true, desc: "EV 评分" },
       ev_priority: { type: "string", required: true, enum: ["P0", "P1", "P2", "P3"], desc: "处置优先级：P0=立即修（可远程无前提利用）/P1=高/P2=中/P3=低，口径见 bug-report 技能" },
       ev_rationale: { type: "string", required: true, desc: "EV 逐维度判断依据（exploitability/价值 逐维写明）" },
