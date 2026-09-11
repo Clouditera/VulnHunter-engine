@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 # VulnHunter-engine 启动器——在目标项目根目录下运行。
-# 本体 = 裸 pi：扩展（runner/code-coverage/pi-web-access）与技能（skills/）经
-# PI_CODING_AGENT_DIR 自动发现；ASSISTANT.md 挂主会话媒介职责；vulnhunter
-# skill 承载使用指南（选 run/集参数/启动跟进）。
+# 本体 = 裸 pi：SYSTEM.md（主会话身份）、扩展（vulnhunter-runner）与技能（skills/）
+# 经 PI_CODING_AGENT_DIR 自动发现；vulnhunter skill 承载使用指南。
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [[ -f "$DIR/.env" ]]; then set -a; source "$DIR/.env"; set +a; fi
 export PI_CODING_AGENT_DIR="$DIR"
-exec pi --append-system-prompt "$DIR/ASSISTANT.md" "$@"
+exec pi "$@"   # SYSTEM.md 由 pi 按约定自动加载，无需 --append-system-prompt
