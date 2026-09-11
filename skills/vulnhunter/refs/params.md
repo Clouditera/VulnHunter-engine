@@ -6,8 +6,10 @@
 |---|---|---|
 | vuln_focus | 无（全方向） | 漏洞关注方向，如"内存安全与输入解析问题"；建议给 |
 | sandbox_cfg | 无 | 沙箱 ssh 连接配置（如 `ssh sandbox-x`）；给了=研判含沙箱复现（dynamic-verify→ev-assess），不给=纯静态（static-verify） |
-| rounds | 3 | hunt 轮数 |
+| rounds | 无 | hunt 轮次显式封顶（默认无上限——主停=覆盖>阈值且零新增，兜底=连续3轮零新增） |
 | chain_filter | 全部 | 每轮前 K 条 HYP 走研判链，限成本用（如 "2"） |
+| chain_concurrency | 3 | 研判链并发数 |
+| hunt_coverage_threshold | 90 | hunt 主停的靶内覆盖率阈值（%） |
 | hunt_mode | 积累制 | "fresh"=每轮 hunt 从 init 重新开始（轮间零继承，靠磁盘 HYP 文件查重） |
 | coverage_include | "."（全项目） | 覆盖率统计目标，逗号分隔相对路径（如 "proxy,vendor/mcmc"）；落盘 .vulnforge/coverage.yaml |
 | coverage_exclude | 无 | 覆盖率排除路径，逗号分隔（如 "vendor,t"）；默认仅排点目录（.vulnforge/.git 等） |

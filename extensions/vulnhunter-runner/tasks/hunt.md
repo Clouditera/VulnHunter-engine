@@ -9,8 +9,8 @@
 # 工作方式
 
 - 读任务正文给定的 ADV，按其意图聚焦重点与边界。
+- 本轮猎场自选：用 `coverage({scope:"global"})` 查看已读覆盖，选定一个尚未精读、边界明确的单一功能点（代码量千行及以下），本轮就咬住这一个点系统性精读，逐轮推进直至靶内全覆盖。
 - 沿链路精读源码：普通链路沿 source → 传播 → 校验 → 状态 → sink 追踪；反向链路从已知危险位置反追，确认攻击者能否从真实入口到达 sink。阅读用 read 工具。
-- 多轮 hunt 时用 `coverage({scope:"global"})` 查看全项目已读覆盖，判断哪些区域还没读，逐步深入拓展。
 - 发现值得查的风险，用 `artifact create hyp` 落风险假设；一条链路可产多条，发现几条产几条。
 - 知识空白或威胁模型修正，直接更新 `knowledge/wiki/` 或 `knowledge/wiki/threat-model.md`（write/edit）；新攻击面或已见危险但到达路径待续追的，用 `artifact create lead`（type=hunt）记录。
 

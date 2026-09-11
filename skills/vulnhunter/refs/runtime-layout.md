@@ -25,11 +25,11 @@
 
 - `<任务>-start[成分]` / `<任务>-done[成分][+产物]`——任务起止；成分 = 该会话启动时的上下文（如 `Σ(on,bu,re)` = onboard/build/research 的摘要）；
 - `Σ(...)` = 摘要，裸代号 = 完整现场；
-- 常见形态：`init`、`hunt1-done`、`Σhunt1-5`、`Σ(init..h1)·hunt1-H1`；
+- 常见形态：`init`、`hunt1-done`、`Σhunt1`（小轮摘要）、`Σhunt1-5`（大轮摘要）、`Σ(init..h1)·hunt1-H1`；
 - 研判链阶段代号：`sv`=static-verify、`dv`=dynamic-verify、`ev`=ev-assess。
 
 编号：`HYP-<来源>-H<n>`（如 `HYP-hunt1-H2`）；确认后 BUG 继承同号（`BUG-hunt1-H2`）。
 
 ## 覆盖率
 
-hunt 精读过的文件计入覆盖率（只统计 hunt 阶段）；`scope.yaml` 存在时有门禁，默认阈值 90%。
+hunt 精读过的文件计入覆盖率（只统计 hunt 阶段）；统计目标由 `coverage.yaml`（runner 参数 coverage_include/exclude 落盘）圈定，默认全项目仅排点目录。
