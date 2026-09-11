@@ -142,9 +142,17 @@ export async function startSession(ctx: SessionCtx, opts: {
   try { const sf = (sess as any).sessionManager?.getSessionFile?.(); if (sf) monitorState.nodeSession(id, sf); } catch { /* 无碍 */ }
   const cov = getCoveragePaths(ctx.workdir);
   let covOn = opts.agent === "hunt";
+  // pi 的 tool_execution_end 事件不带 args（09-11 实踩：全程零事件），
+  // 须在 start 暂存参数、end 配对确认未出错后再记。
+  const covReads = new Map<string, unknown>();
   sess.subscribe((ev: AgentSessionEvent) => {
-    if (covOn && ev.type === "tool_execution_end" && (ev as any).toolName === "read" && !(ev as any).isError) {
-      recordReadCoverageEvent({ jsonlPath: cov.jsonlPath, targetRoot: ctx.cwd, stage: "hunt", input: (ev as any).args });
+    if (!covOn) return;
+    if (ev.type === "tool_execution_start" && (ev as any).toolName === "read") {
+      covReads.set((ev as any).toolCallId, (ev as any).args);
+    } else if (ev.type === "tool_execution_end" && (ev as any).toolName === "read" && !(ev as any).isError) {
+      const a = covReads.get((ev as any).toolCallId);
+      covReads.delete((ev as any).toolCallId);
+      if (a) recordReadCoverageEvent({ jsonlPath: cov.jsonlPath, targetRoot: ctx.cwd, stage: "hunt", input: a as any });
     }
   });
 
@@ -198,6 +206,9 @@ export async function startSession(ctx: SessionCtx, opts: {
       const sm2 = (sess as any).sessionManager as SessionManager;
       const leaf = sm2.getLeafId();
       if (!leaf) throw new Error("mark 失败：会话无叶子节点");
+      // 注意：pi 单条目单标签，叶子已带标签时打标会覆盖旧标签——
+      // 裸 goto(X) 后叶子正是 X 锚点条目，此时打标会毁掉锚点（09-11 mem-b hunt3 实踩）。
+      // 调用方责任：goto 后、打标前先让叶子推进（发消息/摘要），或像 fresh hunt 那样跳过 start 标。
       sm2.appendLabelChange(leaf, label);
       lineage(ctx.workdir, { id, action: "mark", label, entry: leaf });
     },

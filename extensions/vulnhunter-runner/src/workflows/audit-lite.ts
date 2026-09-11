@@ -72,21 +72,28 @@ const liteWorkflow = defineStagedWorkflow({
         const s0 = await s.openSession("init", "init-host", { binding: { advId: `hunt${r0}`, runNo: 1, advLine: "S" } });
         try {
           const rn = `hunt${r0}`, mine = `h${r0}`;
-          const sigmaPrev = Array.from({ length: r0 - 1 }, (_, i) => `Σhunt${i + 1}`);
+          const fresh = ctx.params.hunt_mode === "fresh";
+          // fresh 模式没有轮间摘要，成分表不带 Σhunt*
+          const sigmaPrev = fresh ? [] : Array.from({ length: r0 - 1 }, (_, i) => `Σhunt${i + 1}`);
           if (r0 === 1) s0.mark("hunt-start[init]");
+          // fresh 模式（fish 09-11 双场景测试）：每轮从 init 重新开始，不继承任何 hunt 历史
+          const freshRestart = fresh && r0 > 1;
+          if (freshRestart) await s0.goto("init");
           s0.setBinding({ advId: rn });
           s0.setCoverage(true);
           const before = new Set(hypFiles(ctx));
           const angle = r0 === 1 ? "系统性通读范围内的代码，沿真实数据流挖掘" : r0 === 2 ? "换角度：边界条件、整数/长度运算、编码转换细节" : "换角度：跨函数状态组合、契约缝隙";
+          // fresh 重开轮不打 start 标：goto 后叶子正是 init 锚点条目，pi 单条目单标签，
+          // 此时打标会覆盖锚点标签，下一轮 goto("init") 必死（09-11 mem-b hunt3 实踩）
           const r = await s0.prompt(buildPrompt(ctx, "hunt", `hunt 任务（第 ${r0} 轮，共 ${rounds} 轮）。${angle}，尽可能挖掘风险假设（HYP），每条落到具体 file:line；与前几轮已提的重复不提。确认没有新东西就明说。`),
-            { start: `${rn}-start[init${sigmaPrev.length ? "," + sigmaPrev.join(",") : ""}]` });
+            freshRestart ? undefined : { start: `${rn}-start[init${sigmaPrev.length ? "," + sigmaPrev.join(",") : ""}]` });
           if (r.aborted) throw new Error("API 不可用");
           const news = hypFiles(ctx).filter((f) => !before.has(f));
           (s.state.data.roundHyps ??= {})[rn] = news;
           s0.mark(`${rn}-done[init${sigmaPrev.length ? "," + sigmaPrev.join(",") : ""},${mine}][+${news.length}HYP]`);
-          // hunt 积累制（fish 09-10）：每 5 轮或上下文占用 >75% 才整体摘要化；否则原文积累
+          // hunt 积累制（fish 09-10）：每 5 轮（含末轮，留下 Σ 检查点）或上下文占用 >75% 时整体摘要化；fresh 模式不摘要
           const pct = s0.contextPercent();
-          if (r0 < rounds && (r0 % 5 === 0 || (pct !== null && pct > 75))) {
+          if (ctx.params.hunt_mode !== "fresh" && (r0 % 5 === 0 || (pct !== null && pct > 75))) {
             ctx.report(`hunt 触发整体摘要（第 ${r0} 轮，占用 ${pct === null ? "未知" : pct.toFixed(0) + "%"}）`);
             await s0.summarizeTo("hunt-start", {
               summaryLabel: `Σhunt1-${r0}`,
@@ -94,7 +101,7 @@ const liteWorkflow = defineStagedWorkflow({
             });
           }
           if (r0 === rounds) {
-            s0.mark(`hunt-end[init,${sigmaPrev.join(",")}][+${hypFiles(ctx).length}HYP]`);
+            s0.mark(`hunt-end[init${sigmaPrev.length ? "," + sigmaPrev.join(",") : ""}][+${hypFiles(ctx).length}HYP]`);
           }
           s0.setCoverage(false);
         } finally { s0.close(); }
