@@ -1,6 +1,6 @@
 // M2 Phase 0 冒烟驱动：不经 pi 主会话，直接驱动 audit workflow（onboard → research）
-import workflow from "./.dist/workflows/audit-direct.js";
-import { runNode } from "./.dist/extensions/runner/runtime.js";
+import workflow from "./extensions/vulnhunter-runner/.dist/workflows/audit-direct.js";
+import { runNode } from "../extensions/vulnhunter-runner/.dist/runtime.js";
 
 const cwd = "/home/lhy/dev/llm/VulLab/darkhttpd";
 const engineDir = "/home/lhy/dev/llm/VulnHunter-engine";

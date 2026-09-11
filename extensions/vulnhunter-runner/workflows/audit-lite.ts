@@ -10,10 +10,10 @@
  * 参数（ctx.params）：rounds（默认 3）/ chain_filter（每轮前 K 条跑链，默认全部）。
  */
 
-import { defineStagedWorkflow, runStages, type StageCtx, type StageDef, type WorkflowContext } from "../extensions/runner/runtime.ts";
-import { Pool } from "../extensions/runner/pools.ts";
+import { defineStagedWorkflow, runStages, type StageCtx, type StageDef, type WorkflowContext } from "../runtime.ts";
+import { Pool } from "../pools.ts";
 import { runHypChain } from "./lib.ts";
-import { buildPrompt } from "../extensions/runner/session.ts";
+import { buildPrompt } from "../session.ts";
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
@@ -62,7 +62,7 @@ const liteWorkflow = defineStagedWorkflow({
     out.push({ name: "compress", run: async (s) => {
       const s0 = await s.openSession("init", "init-host", { binding: { advId: "ADV-C0-A1", runNo: 1, advLine: "S" } });
       try {
-        await s0.goto("onboard-start", { summarize: true, summaryLabel: "init[Σ(on,bu,re)]", customInstructions: COMPACT_INIT });
+        await s0.summarizeTo("onboard-start", { summaryLabel: "init[Σ(on,bu,re)]", guide: COMPACT_INIT });
       } finally { s0.close(); }
     } });
 

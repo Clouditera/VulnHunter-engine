@@ -2,7 +2,7 @@
 // 不做真实审计——每步提示词都要求直接编 mock 产物（格式真、内容可假）。
 import { existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { startSession, buildPrompt } from "/home/lhy/dev/llm/VulnHunter-engine/.dist/extensions/runner/session.js";
+import { startSession, buildPrompt } from "/home/lhy/dev/llm/VulnHunter-engine/extensions/vulnhunter-runner/.dist/session.js";
 
 const engineDir = "/home/lhy/dev/llm/VulnHunter-engine";
 const cwd = "/tmp/mock-target";

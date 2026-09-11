@@ -25,7 +25,7 @@ import {
 import {
   getCoveragePaths, loadCoverageMap, aggregateCoverageEvents, persistCoverageMap,
   renderCoverage, loadScope, perScopeStats,
-} from "../code-coverage/coverage-core.ts";
+} from "./node-ext/code-coverage/coverage-core.ts";
 
 // ---------------------------------------------------------------------------
 // 权威字段规格（spec op 的返回内容；校验也用同一份）

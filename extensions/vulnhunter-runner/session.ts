@@ -21,7 +21,7 @@ import { NODES, type NodeSpec } from "./nodes.ts";
 import { type FnBinding, type WsContext } from "./workspace-tools.ts";
 import { makeArtifactTool } from "./artifact.ts";
 import { monitorState } from "./monitor-state.ts";
-import { getCoveragePaths, loadCoverageMap, aggregateCoverageEvents, persistCoverageMap, recordReadCoverageEvent } from "../code-coverage/coverage-core.ts";
+import { getCoveragePaths, loadCoverageMap, aggregateCoverageEvents, persistCoverageMap, recordReadCoverageEvent } from "./node-ext/code-coverage/coverage-core.ts";
 
 /** 会话上下文（与 WorkflowContext 同形，避免循环依赖） */
 export interface SessionCtx {
@@ -61,8 +61,11 @@ export interface SessionHandle {
 }
 
 /** 读 tasks/<name>.md 正文（兼容残留 frontmatter，剥掉） */
+/** 节点资源根（自包含扩展目录：tasks/ skills/ AGENTS.md node-ext/ 都在这下面，fish 09-11 收纳） */
+export function nodeRoot(engineDir: string): string { return join(engineDir, "extensions", "vulnhunter-runner"); }
+
 export function loadTaskBook(engineDir: string, name: string): string {
-  const raw = readFileSync(join(engineDir, "tasks", `${name}.md`), "utf-8");
+  const raw = readFileSync(join(nodeRoot(engineDir), "tasks", `${name}.md`), "utf-8");
   return parseFrontmatter<Record<string, unknown>>(raw).body.trim();
 }
 
@@ -70,7 +73,7 @@ export function loadTaskBook(engineDir: string, name: string): string {
 export function buildPrompt(ctx: SessionCtx, agentName: string, task: string, extra?: string): string {
   const head = [
     `工作区根目录：${ctx.workdir}（任务里的产物相对路径——leads/ todo/ findings/ 等——都以它为基准）`,
-    `引擎仓库根目录：${ctx.engineDir}（任务书提到的 skills/ 等引擎侧相对路径以它为基准，不是目标项目目录）`,
+    `引擎扩展根目录：${nodeRoot(ctx.engineDir)}（任务书提到的 skills/ 等引擎侧相对路径以它为基准，不是目标项目目录）`,
     ctx.params.sandbox_cfg ? `沙箱连接配置：${ctx.params.sandbox_cfg}` : "",
     ctx.params.vuln_focus ? `漏洞关注方向：${ctx.params.vuln_focus}` : "",
     ctx.params.output_lang ? `输出语言：${ctx.params.output_lang}` : "输出语言：zh-CN",
@@ -90,14 +93,15 @@ async function createSession(ctx: SessionCtx, agentName: string, binding: FnBind
   const spec: NodeSpec | undefined = NODES[agentName];
   if (!spec) throw new Error(`未知节点: ${agentName}（nodes.ts 未定义）`);
 
-  const agentsBase = readFileSync(join(ctx.engineDir, "AGENTS.md"), "utf-8");
+  const agentsBase = readFileSync(join(nodeRoot(ctx.engineDir), "AGENTS.md"), "utf-8");
   const resourceLoader = new DefaultResourceLoader({
     cwd: ctx.cwd,
     agentDir: ctx.engineDir,
     settingsManager: SettingsManager.create(ctx.cwd, ctx.engineDir),
     appendSystemPrompt: [agentsBase],
     noExtensions: true,
-    additionalExtensionPaths: (spec.extensions ?? []).map((n) => join(ctx.engineDir, "extensions", n)),
+    additionalExtensionPaths: (spec.extensions ?? []).map((n) => join(nodeRoot(ctx.engineDir), "node-ext", n)),
+    additionalSkillPaths: [join(nodeRoot(ctx.engineDir), "skills")],
     skillsOverride: spec.skills
       ? (base) => ({ skills: base.skills.filter((s) => spec.skills!.includes(s.name)), diagnostics: base.diagnostics })
       : (base) => ({ skills: [], diagnostics: base.diagnostics }),
@@ -118,10 +122,7 @@ async function createSession(ctx: SessionCtx, agentName: string, binding: FnBind
   return { sess: session, spec, customTools };
 }
 
-/** 摘要结构模板（fish 09-10）：start 任务定义 + 完成事实 + 核心论据结论，丢中间细节 */
-export const SUMMARY_SHAPE = `摘要格式要求（必须遵守）：
-1. 被摘要区间内每个任务/轮次都按「任务定义（start 处的目标）→ 执行完成的事实（产物编号清单、裁决/结论）→ 核心论据（关键判断与代码锚点 file:line）」记录；
-2. 丢弃中间推演过程、重复代码细节、试错与回退。`;
+export { SUMMARY_SHAPE } from "./branch-summary.ts";
 
 /** 开启（或复活）一个节点会话 */
 export async function startSession(ctx: SessionCtx, opts: {
@@ -187,8 +188,10 @@ export async function startSession(ctx: SessionCtx, opts: {
     },
 
     async summarizeTo(label: string, opts2: { summaryLabel: string; guide?: string }) {
-      const instr = SUMMARY_SHAPE + (opts2.guide ? `\n\n相关性过滤：${opts2.guide}` : "");
-      await handle.goto(label, { summarize: true, summaryLabel: opts2.summaryLabel, customInstructions: instr });
+      // 自研分支摘要（fish 09-11）：不经过 pi 摘要器（其 4096 硬编码/thinking 丢失缺陷与我们再无关系）
+      const { branchSummarize } = await import("./branch-summary.ts");
+      await branchSummarize(sess as unknown as Parameters<typeof branchSummarize>[0], ctx.engineDir, label, opts2);
+      lineage(ctx.workdir, { id, action: "branch-summary", label, summaryLabel: opts2.summaryLabel });
     },
 
     mark(label: string) {

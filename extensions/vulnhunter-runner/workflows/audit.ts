@@ -14,10 +14,10 @@
 
 import { existsSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { defineWorkflow, type NodeResult, type WorkflowContext } from "../extensions/runner/runtime.ts";
-import { loadState, saveState, readSandboxState } from "../extensions/runner/state.ts";
-import { pending, toTodo, toDone, backToLeads, pendingLeads, leadToAdv, markLeadDone } from "../extensions/runner/queue.ts";
-import { loadScope, loadCoverageMap, aggregateCoverageEvents, perScopeStats, getCoveragePaths } from "../extensions/code-coverage/coverage-core.ts";
+import { defineWorkflow, type NodeResult, type WorkflowContext } from "../runtime.ts";
+import { loadState, saveState, readSandboxState } from "../state.ts";
+import { pending, toTodo, toDone, backToLeads, pendingLeads, leadToAdv, markLeadDone } from "../queue.ts";
+import { loadScope, loadCoverageMap, aggregateCoverageEvents, perScopeStats, getCoveragePaths } from "../node-ext/code-coverage/coverage-core.ts";
 
 const MAX = 5;
 // hunt/verify 默认吃满全局并发（fish 09-02 裁定）：派发顺序 verify>hunt 保证下游优先，
@@ -33,7 +33,7 @@ interface Running {
 }
 
 /** scope 覆盖门禁：全部条目不达标返回 false；无 scope 返回 null（不适用） */
-function coverageMet(ctx: Parameters<typeof import("../extensions/runner/runtime.ts").defineWorkflow>[0] extends never ? never : import("../extensions/runner/runtime.ts").WorkflowContext): boolean | null {
+function coverageMet(ctx: Parameters<typeof import("../runtime.ts").defineWorkflow>[0] extends never ? never : import("../runtime.ts").WorkflowContext): boolean | null {
   const scope = loadScope(ctx.workdir);
   if (!scope) return null;
   const cov = getCoveragePaths(ctx.workdir);

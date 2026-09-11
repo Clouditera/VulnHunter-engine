@@ -7,7 +7,7 @@
 export interface NodeSpec {
   /** pi 内建工具白名单；省略=默认集（read/bash/edit/write + 注入的函数与扩展工具） */
   tools?: string[];
-  /** 挂载的技能（engineDir/skills/ 下名称） */
+  /** 挂载的技能（扩展内 skills/ 下名称） */
   skills?: string[];
   /** 挂载的扩展（裸名 → engineDir/extensions/<name>） */
   extensions?: string[];

@@ -7,9 +7,9 @@
  * 适用：小体量项目（外层 agent 按代码量选择本 run，workflow 内不做规模路由）。
  */
 
-import { defineWorkflow } from "../extensions/runner/runtime.ts";
-import { Pool } from "../extensions/runner/pools.ts";
-import { pending } from "../extensions/runner/queue.ts";
+import { defineWorkflow } from "../runtime.ts";
+import { Pool } from "../pools.ts";
+import { pending } from "../queue.ts";
 import { runInit, runHuntRounds, runHypChain } from "./lib.ts";
 
 export default defineWorkflow({

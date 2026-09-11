@@ -37,8 +37,8 @@ export interface WorkflowContext {
 
 export interface Workflow {
   name: string;
-  description: string;
-  run(ctx: WorkflowContext): Promise<void>;
+  description?: string;
+  run(ctx: WorkflowContext, opts?: { runId?: string; from?: string; only?: string }): Promise<void>;
 }
 
 export function defineWorkflow(w: Workflow): Workflow { return w; }

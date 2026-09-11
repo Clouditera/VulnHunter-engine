@@ -1,0 +1,5 @@
+{
+  "name": "vulnhunter-engine",
+  "private": true,
+  "type": "module"
+}

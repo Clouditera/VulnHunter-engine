@@ -10,11 +10,11 @@
 
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { Pool } from "../extensions/runner/pools.ts";
-import { startSession, buildPrompt, type SessionHandle, type SessionCtx } from "../extensions/runner/session.ts";
-import { loadState, saveState, readSandboxState } from "../extensions/runner/state.ts";
-import { pending, toTodo, toDone, backToLeads } from "../extensions/runner/queue.ts";
-import { loadScope, getCoveragePaths, loadCoverageMap, aggregateCoverageEvents, perScopeStats } from "../extensions/code-coverage/coverage-core.ts";
+import { Pool } from "../pools.ts";
+import { startSession, buildPrompt, type SessionHandle, type SessionCtx } from "../session.ts";
+import { loadState, saveState, readSandboxState } from "../state.ts";
+import { pending, toTodo, toDone, backToLeads } from "../queue.ts";
+import { loadScope, getCoveragePaths, loadCoverageMap, aggregateCoverageEvents, perScopeStats } from "../node-ext/code-coverage/coverage-core.ts";
 
 export interface LibCtx extends SessionCtx {
   report(message: string): void;
