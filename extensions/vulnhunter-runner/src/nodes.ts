@@ -29,7 +29,7 @@ export const NODES: Record<string, NodeSpec> = {
    *  函数 = init 并集 + hunt 的 emit_hyp */
   "init-host": {
     skills: ["project-profiler", "threat-modeling", "wiki-maintainer", "audit-chain"],
-    extensions: ["pi-web-access"],
+    extensions: ["pi-web-access", "code-coverage"],   // code-coverage：hunt 多轮自查阅读覆盖（fish 09-11）
   },
   cognize: {
     skills: ["wiki-maintainer", "audit-chain"],
