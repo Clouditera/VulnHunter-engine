@@ -19,3 +19,4 @@ node_modules/
 .vulnforge/
 __pycache__/
 *.pyc
+evals/

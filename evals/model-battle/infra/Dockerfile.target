@@ -1,9 +1,0 @@
-# 通用目标镜像：base + 指定仓库/标签源码
-# 构建：docker build -f Dockerfile.target --build-arg GIT_URL=https://github.com/redis/redis.git --build-arg TAG=8.0.2 -t vulnforge-target:redis-8.0.2 .
-FROM vulnforge-base
-
-ARG GIT_URL
-ARG TAG
-RUN git clone --depth 1 --branch ${TAG} ${GIT_URL} /target \
-    && cd /target && git log --oneline -1 && rm -rf .git
-# 注：去掉 .git（评测 hunt 不需要 git 历史——且防止"考古答案"泄漏；research 已关闭）

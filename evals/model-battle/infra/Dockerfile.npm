@@ -1,7 +1,0 @@
-# npm 包目标镜像：base + npm 包源码
-# 构建：docker build -f Dockerfile.npm --build-arg NPM_PKG=vm2@3.10.4 -t vulnforge-target:vm2-3.10.4 .
-FROM vulnforge-base
-
-ARG NPM_PKG
-RUN mkdir -p /target && cd /target && npm pack ${NPM_PKG} \
-    && tar xzf *.tgz && mv package/* . && rm -rf package *.tgz && ls | head -3
