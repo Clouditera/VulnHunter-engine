@@ -27,8 +27,9 @@ import { join } from "node:path";
 const COMPACT_INIT = "保留：项目画像与威胁模型要点、构建部署要点、关键代码区域与行号、漏洞认可口径、检索到的情报结论。丢弃：过程性输出与重复细节。摘要正文控制在 4000 字以内。";
 const COMPACT_ROUND = "只保留本轮新提出的 HYP 标题+一句话主张+关键锚点行号，以及读过的代码区域清单；丢弃推演过程。控制在 2000 字内。";
 
-const hypFiles = (ctx: WorkflowContext) => readdirSync(join(ctx.workdir, "leads")).filter((f) => f.startsWith("HYP-"));
-const advCount = (ctx: WorkflowContext) => readdirSync(join(ctx.workdir, "leads")).filter((f) => f.startsWith("ADV-")).length;
+const lsdir = (ctx: WorkflowContext, d: string) => { try { return readdirSync(join(ctx.workdir, d)); } catch { return []; } };
+const hypFiles = (ctx: WorkflowContext) => lsdir(ctx, "leads").filter((f) => f.startsWith("HYP-"));
+const advCount = (ctx: WorkflowContext) => lsdir(ctx, "leads").filter((f) => f.startsWith("ADV-")).length;
 
 const liteWorkflow = defineStagedWorkflow({
   name: "audit-lite",
