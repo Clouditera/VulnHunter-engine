@@ -21,7 +21,7 @@ import { NODES, type NodeSpec } from "./nodes.ts";
 import { type FnBinding, type WsContext } from "./workspace-tools.ts";
 import { makeArtifactTool } from "./artifact.ts";
 import { monitorState } from "./monitor-state.ts";
-import { getCoveragePaths, loadCoverageMap, aggregateCoverageEvents, persistCoverageMap, recordReadCoverageEvent } from "./node-ext/code-coverage/coverage-core.ts";
+import { getCoveragePaths, loadCoverageMap, aggregateCoverageEvents, persistCoverageMap, recordReadCoverageEvent } from "../node-ext/code-coverage/coverage-core.ts";
 
 /** 会话上下文（与 WorkflowContext 同形，避免循环依赖） */
 export interface SessionCtx {
@@ -100,7 +100,7 @@ async function createSession(ctx: SessionCtx, agentName: string, binding: FnBind
     settingsManager: SettingsManager.create(ctx.cwd, ctx.engineDir),
     appendSystemPrompt: [agentsBase],
     noExtensions: true,
-    additionalExtensionPaths: (spec.extensions ?? []).map((n) => join(nodeRoot(ctx.engineDir), "src", "node-ext", n)),
+    additionalExtensionPaths: (spec.extensions ?? []).map((n) => join(nodeRoot(ctx.engineDir), "node-ext", n)),
     additionalSkillPaths: [join(nodeRoot(ctx.engineDir), "skills")],
     skillsOverride: spec.skills
       ? (base) => ({ skills: base.skills.filter((s) => spec.skills!.includes(s.name)), diagnostics: base.diagnostics })

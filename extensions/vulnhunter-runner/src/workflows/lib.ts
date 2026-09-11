@@ -14,7 +14,7 @@ import { Pool } from "../pools.ts";
 import { startSession, buildPrompt, type SessionHandle, type SessionCtx } from "../session.ts";
 import { loadState, saveState, readSandboxState } from "../state.ts";
 import { pending, toTodo, toDone, backToLeads } from "../queue.ts";
-import { loadScope, getCoveragePaths, loadCoverageMap, aggregateCoverageEvents, perScopeStats } from "../node-ext/code-coverage/coverage-core.ts";
+import { loadScope, getCoveragePaths, loadCoverageMap, aggregateCoverageEvents, perScopeStats } from "../../node-ext/code-coverage/coverage-core.ts";
 
 export interface LibCtx extends SessionCtx {
   report(message: string): void;

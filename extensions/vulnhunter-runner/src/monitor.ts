@@ -9,7 +9,7 @@ import type { Theme } from "@earendil-works/pi-coding-agent";
 import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { monitorState } from "./monitor-state.ts";
-import { loadScope, loadCoverageMap, aggregateCoverageEvents, perScopeStats, getCoveragePaths } from "./node-ext/code-coverage/coverage-core.ts";
+import { loadScope, loadCoverageMap, aggregateCoverageEvents, perScopeStats, getCoveragePaths } from "../node-ext/code-coverage/coverage-core.ts";
 
 type Tab = "run" | "detail" | "coverage";
 

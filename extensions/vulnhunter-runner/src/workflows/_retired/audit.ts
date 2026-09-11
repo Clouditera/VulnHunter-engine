@@ -17,7 +17,7 @@ import { join } from "node:path";
 import { defineWorkflow, type NodeResult, type WorkflowContext } from "../runtime.ts";
 import { loadState, saveState, readSandboxState } from "../state.ts";
 import { pending, toTodo, toDone, backToLeads, pendingLeads, leadToAdv, markLeadDone } from "../queue.ts";
-import { loadScope, loadCoverageMap, aggregateCoverageEvents, perScopeStats, getCoveragePaths } from "../node-ext/code-coverage/coverage-core.ts";
+import { loadScope, loadCoverageMap, aggregateCoverageEvents, perScopeStats, getCoveragePaths } from ".../node-ext/code-coverage/coverage-core.ts";
 
 const MAX = 5;
 // hunt/verify 默认吃满全局并发（fish 09-02 裁定）：派发顺序 verify>hunt 保证下游优先，
