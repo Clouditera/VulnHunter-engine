@@ -6,6 +6,7 @@
 
 import type { FnBinding } from "./workspace-tools.ts";
 import { buildPrompt, startSession } from "./session.ts";
+import { countCoverageTargetFiles } from "../node-ext/code-coverage/coverage-core.ts";
 import YAML from "yaml";
 
 export interface NodeOptions {
@@ -115,6 +116,12 @@ export async function runStages(wf: StagedWorkflow, ctx: WorkflowContext, opts: 
       writeFileSync(join(ctx.workdir, "coverage.yaml"), YAML.stringify(doc));
     }
   }
+
+  // 空目标护栏：include 被 exclude 吞掉时 coverage 静默全程为零（09-11 fish 问语义时定的）
+  try {
+    if (countCoverageTargetFiles(ctx.cwd, ctx.workdir) === 0)
+      ctx.report("⚠ 覆盖率统计目标为空（coverage_include 被 coverage_exclude 吞掉？），coverage 将全程为零");
+  } catch { /* 自检失败无碍 */ }
 
   const sctx: StageCtx = {
     ...ctx, state, save,

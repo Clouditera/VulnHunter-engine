@@ -40,6 +40,11 @@ export function loadCoverageConfig(outputDir: string): CoverageConfig {
   } catch { return DEFAULT_COVERAGE_CONFIG; }
 }
 
+/** 统计目标自检：返回靶内文件数（run 启动护栏用——0 = include 被 exclude 吞掉，coverage 将静默全程为零） */
+export function countCoverageTargetFiles(targetRoot: string, outputDir: string): number {
+  return walkFiles(targetRoot, loadCoverageConfig(outputDir)).length;
+}
+
 /** rel（相对项目根）是否命中路径清单；"." 代表全项目 */
 function underAny(rel: string, roots: string[]): boolean {
   return roots.some((r) => r === "." || rel === r || rel.startsWith(r + "/"));
