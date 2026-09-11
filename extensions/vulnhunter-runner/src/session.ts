@@ -100,7 +100,7 @@ async function createSession(ctx: SessionCtx, agentName: string, binding: FnBind
     settingsManager: SettingsManager.create(ctx.cwd, ctx.engineDir),
     appendSystemPrompt: [agentsBase],
     noExtensions: true,
-    additionalExtensionPaths: (spec.extensions ?? []).map((n) => join(nodeRoot(ctx.engineDir), "node-ext", n)),
+    additionalExtensionPaths: (spec.extensions ?? []).map((n) => join(nodeRoot(ctx.engineDir), "src", "node-ext", n)),
     additionalSkillPaths: [join(nodeRoot(ctx.engineDir), "skills")],
     skillsOverride: spec.skills
       ? (base) => ({ skills: base.skills.filter((s) => spec.skills!.includes(s.name)), diagnostics: base.diagnostics })

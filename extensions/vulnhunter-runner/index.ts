@@ -16,11 +16,11 @@ import { Type } from "@earendil-works/pi-ai";
 import { readdirSync, writeFileSync, mkdirSync, existsSync, statSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import type { Workflow, WorkflowContext } from "./runtime.ts";
-import { createMonitorComponent } from "./monitor.ts";
+import type { Workflow, WorkflowContext } from "./src/runtime.ts";
+import { createMonitorComponent } from "./src/monitor.ts";
 
 const ENGINE_DIR = process.env.PI_CODING_AGENT_DIR ?? resolve(__dirname, "..", "..");
-const WORKFLOWS_DIR = resolve(__dirname, "workflows");   // 自包含：workflows 收进扩展目录（fish 09-11）
+const WORKFLOWS_DIR = resolve(__dirname, "src", "workflows");   // 代码资产集中 src/（fish 09-11）
 
 interface RunState {
   status: "idle" | "running" | "done" | "error";
