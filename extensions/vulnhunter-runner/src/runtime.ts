@@ -6,6 +6,7 @@
 
 import type { FnBinding } from "./workspace-tools.ts";
 import { buildPrompt, startSession } from "./session.ts";
+import YAML from "yaml";
 
 export interface NodeOptions {
   /** 任务说明句（"hunt 任务，沿审计链路精读并提出风险假设。"）——runNode 组装为「接下来开始执行 …」 */
@@ -103,6 +104,17 @@ export async function runStages(wf: StagedWorkflow, ctx: WorkflowContext, opts: 
     state = { workflow: wf.name, runId, stages: {}, sessions: {}, data: {} };
   }
   const save = () => writeFileSync(statePath, JSON.stringify(state, null, 2));
+
+  // 覆盖率统计目标参数落盘（09-11 fish）：coverage_include / coverage_exclude → .vulnforge/coverage.yaml，
+  // 枚举/记录/查询三层共读；参数缺省时不动已有文件（允许手工编辑），三层自取默认（全项目、仅排点目录）
+  {
+    const inc = ctx.params.coverage_include, exc = ctx.params.coverage_exclude;
+    if (inc !== undefined || exc !== undefined) {
+      const toList = (v?: string) => (v ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+      const doc = { include: toList(inc).length ? toList(inc) : ["."], exclude: toList(exc) };
+      writeFileSync(join(ctx.workdir, "coverage.yaml"), YAML.stringify(doc));
+    }
+  }
 
   const sctx: StageCtx = {
     ...ctx, state, save,

@@ -21,7 +21,7 @@ import { NODES, type NodeSpec } from "./nodes.ts";
 import { type FnBinding, type WsContext } from "./workspace-tools.ts";
 import { makeArtifactTool } from "./artifact.ts";
 import { monitorState } from "./monitor-state.ts";
-import { getCoveragePaths, loadCoverageMap, aggregateCoverageEvents, persistCoverageMap, recordReadCoverageEvent } from "../node-ext/code-coverage/coverage-core.ts";
+import { getCoveragePaths, loadCoverageConfig, loadCoverageMap, aggregateCoverageEvents, persistCoverageMap, recordReadCoverageEvent } from "../node-ext/code-coverage/coverage-core.ts";
 
 /** 会话上下文（与 WorkflowContext 同形，避免循环依赖） */
 export interface SessionCtx {
@@ -141,6 +141,7 @@ export async function startSession(ctx: SessionCtx, opts: {
   monitorState.nodeStart(id, { id, agent: opts.agent, target: opts.binding?.advId ?? opts.binding?.hypId, startTs: Date.now() });
   try { const sf = (sess as any).sessionManager?.getSessionFile?.(); if (sf) monitorState.nodeSession(id, sf); } catch { /* 无碍 */ }
   const cov = getCoveragePaths(ctx.workdir);
+  const covCfg = loadCoverageConfig(ctx.workdir);
   let covOn = opts.agent === "hunt";
   // pi 的 tool_execution_end 事件不带 args（09-11 实踩：全程零事件），
   // 须在 start 暂存参数、end 配对确认未出错后再记。
@@ -152,7 +153,7 @@ export async function startSession(ctx: SessionCtx, opts: {
     } else if (ev.type === "tool_execution_end" && (ev as any).toolName === "read" && !(ev as any).isError) {
       const a = covReads.get((ev as any).toolCallId);
       covReads.delete((ev as any).toolCallId);
-      if (a) recordReadCoverageEvent({ jsonlPath: cov.jsonlPath, targetRoot: ctx.cwd, stage: "hunt", input: a as any });
+      if (a) recordReadCoverageEvent({ jsonlPath: cov.jsonlPath, targetRoot: ctx.cwd, stage: "hunt", input: a as any, cfg: covCfg });
     }
   });
 

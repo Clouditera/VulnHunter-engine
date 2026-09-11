@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync, readdirSync, statSync, openSync, readSync, fstatSync, closeSync } from "node:fs";
 import path, { join } from "node:path";
+import { parse as parseYaml } from "yaml";
 
 // ============================================================================
 // Constants
@@ -14,11 +15,46 @@ const CODE_EXTENSIONS = new Set([
   ".conf", ".md", ".rst", ".txt", ".xml", ".proto", ".graphql", ".gql",
 ]);
 
-const EXCLUDED_DIRS = new Set([
-  ".git", ".hg", ".svn", "node_modules", "dist", "build", "target", "vendor",
-  "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", ".venv", "venv",
-  "env", ".tox", ".next", ".nuxt", "coverage", ".youngflow", ".runs",
-]);
+// ============================================================================
+// 覆盖统计目标配置（09-11 fish 定）：.vulnforge/coverage.yaml
+// runner 启动参数 coverage_include / coverage_exclude 落盘而来；
+// 枚举（walkFiles）、记录（resolveToRel）、查询（coverage 工具）三层共读。
+// 默认仅排点目录（.vulnforge/.git 天然在内），不再内置 vendor 等黑名单。
+// ============================================================================
+
+export interface CoverageConfig { include: string[]; exclude: string[] }
+export const DEFAULT_COVERAGE_CONFIG: CoverageConfig = { include: ["."], exclude: [] };
+
+export function loadCoverageConfig(outputDir: string): CoverageConfig {
+  try {
+    const p = path.join(outputDir, "coverage.yaml");
+    if (!existsSync(p)) return DEFAULT_COVERAGE_CONFIG;
+    const doc: any = parseYaml(readFileSync(p, "utf8"));
+    const norm = (v: unknown): string[] =>
+      Array.isArray(v)
+        ? v.filter((x): x is string => typeof x === "string" && x.trim().length > 0)
+            .map((s) => s.trim().replace(/^\.\/+|\/+$/g, "") || ".")
+        : [];
+    const include = norm(doc?.include), exclude = norm(doc?.exclude);
+    return { include: include.length ? include : ["."], exclude };
+  } catch { return DEFAULT_COVERAGE_CONFIG; }
+}
+
+/** rel（相对项目根）是否命中路径清单；"." 代表全项目 */
+function underAny(rel: string, roots: string[]): boolean {
+  return roots.some((r) => r === "." || rel === r || rel.startsWith(r + "/"));
+}
+
+/** 文件级判定：在 include 内且不在 exclude 内 */
+export function inCoverageTarget(cfg: CoverageConfig, rel: string): boolean {
+  return underAny(rel, cfg.include) && !underAny(rel, cfg.exclude);
+}
+
+/** 目录级判定：允许下潜——命中 include，或 include 根在它更深处（如 include=vendor/mcmc 时要能潜进 vendor） */
+function dirMayContainTarget(cfg: CoverageConfig, rel: string): boolean {
+  const inc = cfg.include.some((r) => r === "." || rel === r || rel.startsWith(r + "/") || r.startsWith(rel + "/"));
+  return inc && !underAny(rel, cfg.exclude);
+}
 
 // ============================================================================
 // Types
@@ -85,21 +121,25 @@ function countLines(file: string): number {
   }
 }
 
-function walkFiles(root: string): string[] {
+function walkFiles(root: string, cfg: CoverageConfig): string[] {
   const out: string[] = [];
-  function walk(dir: string) {
+  function walk(dir: string, rel: string) {
     let entries: string[] = [];
     try { entries = readdirSync(dir); } catch { return; }
     for (const name of entries) {
-      if (EXCLUDED_DIRS.has(name) || name.startsWith(".")) continue;
+      const childRel = rel ? `${rel}/${name}` : name;
+      // 点目录/点文件默认排除（.vulnforge/.git/.pi-subagents 天然在此列）；
+      // 仅当 include 显式点名该点路径（不含 "." 通配）时放行
+      if (name.startsWith(".") && !cfg.include.some((r) => r !== "." && (r === childRel || r.startsWith(childRel + "/")))) continue;
       const full = path.join(dir, name);
       let st;
       try { st = statSync(full); } catch { continue; }
-      if (st.isDirectory()) walk(full);
-      else if (st.isFile() && isProbablyCodeFile(full) && st.size <= 2_000_000) out.push(full);
+      if (st.isDirectory()) {
+        if (dirMayContainTarget(cfg, childRel)) walk(full, childRel);
+      } else if (st.isFile() && isProbablyCodeFile(full) && st.size <= 2_000_000 && inCoverageTarget(cfg, childRel)) out.push(full);
     }
   }
-  walk(root);
+  walk(root, "");
   return out;
 }
 
@@ -161,8 +201,11 @@ function recompute(map: CoverageMap) {
 }
 
 function ensureInitialMap(targetRoot: string, outputDir: string, existing?: CoverageMap): CoverageMap {
+  const cfg = loadCoverageConfig(outputDir);
   const files: Record<string, FileCoverage> = existing?.files ?? {};
-  for (const full of walkFiles(targetRoot)) {
+  // 按当前统计目标裁剪：配置变了（如 vendor 纳进/排出）分母立即对齐，不残留历史条目
+  for (const rel of Object.keys(files)) if (!inCoverageTarget(cfg, rel)) delete files[rel];
+  for (const full of walkFiles(targetRoot, cfg)) {
     const rel = path.relative(targetRoot, full).replaceAll(path.sep, "/");
     if (!files[rel]) {
       files[rel] = {
@@ -287,12 +330,14 @@ function persistJson(map: CoverageMap, jsonPath: string) {
  * Resolve an absolute file path to a relative path under targetRoot.
  * Returns null if the path is outside targetRoot or not a trackable code file.
  */
-function resolveToRel(absPath: string, targetRoot: string): string | null {
+function resolveToRel(absPath: string, targetRoot: string, cfg: CoverageConfig = DEFAULT_COVERAGE_CONFIG): string | null {
   const resolved = path.resolve(absPath);
   if (!resolved.startsWith(targetRoot + path.sep) && resolved !== targetRoot) return null;
   if (!existsSync(resolved) || !statSync(resolved).isFile()) return null;
   if (!isProbablyCodeFile(resolved)) return null;
-  return path.relative(targetRoot, resolved).replaceAll(path.sep, "/");
+  const rel = path.relative(targetRoot, resolved).replaceAll(path.sep, "/");
+  if (!inCoverageTarget(cfg, rel)) return null;
+  return rel;
 }
 
 // ============================================================================
@@ -496,11 +541,12 @@ export function recordReadCoverageEvent(args: {
   targetRoot: string;
   stage: string;
   input?: { path?: string; offset?: number; limit?: number };
+  cfg?: CoverageConfig;
 }) {
   const input = args.input;
   if (!input?.path) return;
 
-  const rel = resolveToRel(input.path, args.targetRoot);
+  const rel = resolveToRel(input.path, args.targetRoot, args.cfg);
   if (!rel) return;
 
   const total = countLines(path.resolve(input.path));
