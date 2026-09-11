@@ -137,6 +137,7 @@ export async function runHuntRounds(ctx: LibCtx, init: SessionHandle, opts: Hunt
           "换角度：平台与构建形态差异（32 位 off_t、NDEBUG、各平台 sendfile、非 glibc libc）。",
           "换角度：错误路径、清理路径、日志与审计盲区。",
           "换角度：输入解析的字节级语义与边界条件。"] as const)[Math.min(round - 2, 3)];
+    init.setBinding({ advId: `hunt${round}` });
     ctx.report(`hunt 第 ${round}/${maxRounds} 轮`);
     const r = await init.prompt(buildPrompt(ctx, "hunt", `hunt 任务第 ${round} 轮。${angle} 尽可能挖掘风险假设（HYP）；与已有 HYP 重复的不提，确认没有新东西就明说。`));
     if (r.aborted) { ctx.report("API 不可用，workflow 中止。"); return false; }
