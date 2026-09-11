@@ -6,8 +6,8 @@
 |---|---|---|
 | vuln_focus | 无（全方向） | 漏洞关注方向，如"内存安全与输入解析问题"；建议给 |
 | sandbox_cfg | 无 | 沙箱 ssh 连接配置（如 `ssh sandbox-x`）；给了=研判含沙箱复现（dynamic-verify→ev-assess），不给=纯静态（static-verify） |
-| rounds | audit-lite 为 3；audit-direct 按规模推断 | hunt 轮数 |
-| chain_filter | 全部 | 每轮前 K 条 HYP 走研判链，限成本用（如 "2"；audit-lite 用） |
+| rounds | 3 | hunt 轮数 |
+| chain_filter | 全部 | 每轮前 K 条 HYP 走研判链，限成本用（如 "2"） |
 | output_lang | zh-CN | 产物输出语言 |
 
 ## 询问策略

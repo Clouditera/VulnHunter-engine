@@ -32,9 +32,8 @@ interface RunState {
 
 const WF_DOC = `\
 可用 workflow：
-- audit-lite：轻量审计（<1 万行项目）。onboard→build→research→hunt 多轮→每条 HYP 走 verify 链。
-- audit-direct：标准审计。init → hunt 多轮（积累制，5 轮或 75% 触发摘要）→ 每 HYP 的 verify→ev 链。
-常用 params：vuln_focus（漏洞关注方向，建议给）、rounds（hunt 轮数，默认按项目规模）、chain_filter（每轮最多几条 HYP 走链）、sandbox_cfg（沙箱 ssh 配置，给了就走 dynamic-verify 含沙箱复现，不给就是纯静态 static-verify）。`;
+- audit-lite：onboard→build→research→hunt 多轮→每条 HYP 走研判链。
+常用 params：vuln_focus（漏洞关注方向，建议给）、rounds（hunt 轮数，默认 3）、chain_filter（每轮前 K 条 HYP 走链）、sandbox_cfg（沙箱 ssh 配置，给了就走 dynamic-verify 含沙箱复现，不给就是纯静态 static-verify）。`;
 
 function readRuns(workdir: string): Array<{ runId: string; workflow: string; stages: Record<string, string> }> {
   const dir = join(workdir, "runs");

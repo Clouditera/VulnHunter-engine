@@ -5,13 +5,8 @@
 | workflow | 适用 | 阶段结构 |
 |---|---|---|
 | **audit-lite** | 轻量审计（<1 万行小项目） | onboard→build→research→compress→hunt×N→chains |
-| **audit-direct** | 标准审计（中等项目） | init（onboard→build→research 同会话）→hunt 多轮（积累制）→每 HYP 的研判链 |
 
-`chains` 指每条 HYP 的研判链。旧 audit.ts（全量大流程）处于退役边缘，不要向用户推荐。
-
-## 规模口径
-
-<1 万行 → audit-lite；更大 → audit-direct。10 万行以上的大型流程在重写中，先如实告诉用户当前支持有限。
+`chains` 指每条 HYP 的研判链。**当前只提供 audit-lite**；中等/大型项目的流程在重写中，用户问起如实说明支持有限。
 
 ## 动态 / 静态分支（由沙箱配置决定，不是独立 workflow）
 
