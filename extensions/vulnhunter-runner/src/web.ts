@@ -144,7 +144,8 @@ function buildStageDetail(workdir: string, runId: string, stage: string) {
   const start = t?.start ? Date.parse(t.start) : null;
   const end = start != null ? (t?.ms != null ? start + t.ms : Date.now()) : null;
 
-  // lineage 按阶段时间窗切片（±2s 缓冲）
+  // lineage 按阶段时间窗切片：[start, end) 左闭右开——相邻阶段共享边界时刻，
+  // 归后一阶段（chains fork 不会漏进 hunt 窗；designer 09-14 实捕 ±2s 缓冲越界）
   let lineage: LineageEntry[] = [];
   try {
     lineage = readFileSync(join(workdir, "sessions-lineage.jsonl"), "utf-8").trim().split("\n")
@@ -153,7 +154,7 @@ function buildStageDetail(workdir: string, runId: string, stage: string) {
       .filter((e) => {
         if (start == null) return true;
         const ts = e.ts ? Date.parse(e.ts) : NaN;
-        return Number.isFinite(ts) && ts >= start - 2000 && (end == null || ts <= end + 2000);
+        return Number.isFinite(ts) && ts >= start && (end == null || ts < end);
       });
   } catch { /* 无 lineage */ }
 
@@ -183,6 +184,7 @@ function buildStageDetail(workdir: string, runId: string, stage: string) {
   if (stage === "hunt") {
     metrics.rounds = data.huntRound ?? null;
     metrics.roundHyps = Object.fromEntries(Object.entries(data.roundHyps ?? {}).map(([k, v]) => [k, Array.isArray(v) ? v.length : 0]));
+    metrics.producedHyp = Object.values(data.roundHyps ?? {}).reduce((n: number, v) => n + (Array.isArray(v) ? v.length : 0), 0); // 阶段真实产量（run-state 记录，非盘面推）
     metrics.roundSigma = data.roundSigma ?? {};
     metrics.zeroStreak = data.huntZeroStreak ?? null;
   }
