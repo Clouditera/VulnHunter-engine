@@ -31,6 +31,7 @@ export interface RunInfo {
   endedAt?: number;
   status: "running" | "done" | "error";
   note?: string;
+  sandbox?: boolean;   // 本 run 是否启用沙箱（sandbox_cfg 有无）——主页区分 sandbox 池“未启用/空闲”（09-14 designer）
 }
 
 const running = new Map<string, RunningNode>();
