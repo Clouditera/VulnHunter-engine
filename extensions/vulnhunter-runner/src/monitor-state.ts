@@ -20,6 +20,8 @@ export interface PoolInfo {
   max: number;
   active: Map<string, number>;  // label → 开始时间戳
   queued: string[];            // 排队任务标签（09-14 designer 主页需要明细）
+  dispatched: number;          // 累计占位——主页“已派发”
+  finished: number;            // 累计完成——主页“已结束”
 }
 
 export interface RunInfo {
@@ -56,14 +58,14 @@ export const monitorState = {
     if (events.length > MAX_EVENTS) events.splice(0, events.length - MAX_EVENTS);
   },
 
-  poolRegister(name: string, max: number) { if (!pools.has(name)) pools.set(name, { name, max, active: new Map(), queued: [] }); },
+  poolRegister(name: string, max: number) { if (!pools.has(name)) pools.set(name, { name, max, active: new Map(), queued: [], dispatched: 0, finished: 0 }); },
   poolAcquire(name: string, label: string) {
     const p = pools.get(name);
-    if (p) p.active.set(label, Date.now());
+    if (p) { p.active.set(label, Date.now()); p.dispatched++; }
   },
   poolRelease(name: string, label: string) {
     const p = pools.get(name);
-    if (p) p.active.delete(label);
+    if (p && p.active.delete(label)) p.finished++;
   },
   poolQueue(name: string, labels: string[]) { const p = pools.get(name); if (p) p.queued = labels; },
 

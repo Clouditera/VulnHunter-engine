@@ -129,6 +129,7 @@ export async function runStages(wf: StagedWorkflow, ctx: WorkflowContext, opts: 
 
   const sctx: StageCtx = {
     ...ctx, state, save,
+    report: (m: string) => { monitorState.log(m); ctx.report(m); },   // 报告同时进事件流（09-14 观察台：停轮原因等）
     async openSession(role, agent, o = {}) {
       const file = state.sessions[role];
       const h = await startSession(ctx, !o.fresh && file && existsSync(file)
@@ -156,6 +157,9 @@ export async function runStages(wf: StagedWorkflow, ctx: WorkflowContext, opts: 
     if (!opts.only && state.stages[st.name] === "done") continue;   // 断点续跑跳过已完成
     ctx.report(`—— 阶段 ${st.name} ——`);
     monitorState.runStage(ctx.workdir, runId, st.name);
+    const stageT0 = Date.now();
+    ((state.data.stageTimes ??= {}) as Record<string, { start: string; ms: number }>)[st.name] = { start: new Date(stageT0).toISOString(), ms: 0 };
+    save();
     try {
       await st.run(sctx);
       state.stages[st.name] = "done"; save();
@@ -164,6 +168,9 @@ export async function runStages(wf: StagedWorkflow, ctx: WorkflowContext, opts: 
       ctx.report(`阶段 ${st.name} 失败：${String(e).slice(0, 200)}（修复后可 --from ${st.name} 续跑）`);
       monitorState.runEnd(ctx.workdir, runId, "error", `${st.name}: ${String(e).slice(0, 120)}`);
       throw e;
+    } finally {
+      ((state.data.stageTimes ??= {}) as Record<string, { start: string; ms: number }>)[st.name].ms = Date.now() - stageT0;
+      save();
     }
   }
   ctx.report(`workflow ${wf.name}（runId=${runId}）执行完毕`);
