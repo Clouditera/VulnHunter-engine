@@ -232,7 +232,7 @@ export async function runHypChain(ctx: LibCtx, init: SessionHandle, hypFile: str
             if (!r3.aborted) chain.mark(`ev(${hypShort})-done[Σ,${stageCode}(${hypShort}),ev(${hypShort})][+EV 已评]`);
             else ctx.report(`${hypId}：ev-assess API 中止`);
           }
-        });
+        }, `${hypId}·ev`);
       }
       toDone(ctx.workdir, hypFile);
     } finally {
@@ -244,7 +244,7 @@ export async function runHypChain(ctx: LibCtx, init: SessionHandle, hypFile: str
    }
   };
 
-  await opts.verifyPool.run(task);
+  await opts.verifyPool.run(task, hypId);
 }
 
 function lockFork(): Promise<() => void> {

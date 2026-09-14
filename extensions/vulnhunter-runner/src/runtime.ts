@@ -7,6 +7,8 @@
 import type { FnBinding } from "./workspace-tools.ts";
 import { buildPrompt, startSession } from "./session.ts";
 import { countCoverageTargetFiles } from "../node-ext/code-coverage/coverage-core.ts";
+import { monitorState } from "./monitor-state.ts";
+import { ensureWebService } from "./web.ts";
 import YAML from "yaml";
 
 export interface NodeOptions {
@@ -140,6 +142,10 @@ export async function runStages(wf: StagedWorkflow, ctx: WorkflowContext, opts: 
   for (const st of stages) if (!(st.name in state.stages)) state.stages[st.name] = "pending";
   save();
 
+  // 观察台：env 开门即起（VULNHUNTER_WEB/PORT/HOST），驱动跑批也能被观察（fish 09-14）
+  ensureWebService();
+  monitorState.runStart({ runId, workflow: wf.name, workdir: ctx.workdir, cwd: ctx.cwd, startedAt: Date.now(), status: "running" });
+
   let active = !opts.from && !opts.only;
   for (const st of stages) {
     if (opts.only && st.name !== opts.only) continue;
@@ -153,8 +159,10 @@ export async function runStages(wf: StagedWorkflow, ctx: WorkflowContext, opts: 
     } catch (e) {
       state.stages[st.name] = "failed"; save();
       ctx.report(`阶段 ${st.name} 失败：${String(e).slice(0, 200)}（修复后可 --from ${st.name} 续跑）`);
+      monitorState.runEnd(ctx.workdir, runId, "error", `${st.name}: ${String(e).slice(0, 120)}`);
       throw e;
     }
   }
   ctx.report(`workflow ${wf.name}（runId=${runId}）执行完毕`);
+  monitorState.runEnd(ctx.workdir, runId, "done");
 }

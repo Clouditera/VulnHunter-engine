@@ -18,6 +18,7 @@ import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { Workflow, WorkflowContext } from "./src/runtime.ts";
 import { createMonitorComponent } from "./src/monitor.ts";
+import { ensureWebService } from "./src/web.ts";
 
 const ENGINE_DIR = process.env.PI_CODING_AGENT_DIR ?? resolve(__dirname, "..", "..");
 const WORKFLOWS_DIR = resolve(__dirname, "src", "workflows");   // 代码资产集中 src/（fish 09-11）
@@ -65,6 +66,9 @@ function renderFindings(workdir: string): string {
 export default function (pi: ExtensionAPI) {
   const state: RunState = { status: "idle", log: [] };
   const workflows = new Map<string, Workflow>();
+
+  // web 观察台（fish 09-14）：VULNHUNTER_WEB=1 即起，端口/绑定走 VULNHUNTER_WEB_PORT/HOST
+  ensureWebService();
 
   async function loadWorkflows() {
     workflows.clear();

@@ -138,7 +138,7 @@ export async function startSession(ctx: SessionCtx, opts: {
   const { sess, spec } = await createSession(ctx, opts.agent, bindingRef, sm);
 
   // 监控 + hunt 覆盖记录（hunt 精读=覆盖率唯一口径）
-  monitorState.nodeStart(id, { id, agent: opts.agent, target: opts.binding?.advId ?? opts.binding?.hypId, startTs: Date.now() });
+  monitorState.nodeStart(id, { id, agent: opts.agent, target: opts.binding?.advId ?? opts.binding?.hypId, startTs: Date.now(), workdir: ctx.workdir, cwd: ctx.cwd });
   try { const sf = (sess as any).sessionManager?.getSessionFile?.(); if (sf) monitorState.nodeSession(id, sf); } catch { /* 无碍 */ }
   const cov = getCoveragePaths(ctx.workdir);
   const covCfg = loadCoverageConfig(ctx.workdir);
