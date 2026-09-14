@@ -19,7 +19,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { monitorState } from "./monitor-state.ts";
+import { monitorState, loadRuns } from "./monitor-state.ts";
 
 let started = false;
 
@@ -28,6 +28,7 @@ export function ensureWebService(): string | null {
   const flag = process.env.VULNHUNTER_WEB;
   if (!flag || flag === "0") return null;
   started = true;
+  loadRuns();   // 回放历史 run 注册表（观察台随 pi 会话常驻，新会话也要看到旧 run）
   const port = Number(process.env.VULNHUNTER_WEB_PORT || "4100");
   const host = process.env.VULNHUNTER_WEB_HOST || "127.0.0.1";
   const srv = createServer((req, res) => {
@@ -37,11 +38,26 @@ export function ensureWebService(): string | null {
     });
   });
   srv.unref();   // 观察台不拖住宿主进程退出
-  srv.listen(port, host);
-  const url = `http://${host}:${port}`;
-  monitorState.log(`web 观察台启动：${url}`);
-  console.error(`[vulnhunter-web] 观察台：${url}`);
-  return url;
+  // 端口冲突/监听失败不得炸掉 run：观察台是尽力而为的附属品（09-14 常驻实例占 4100 实踩）
+  const tryListen = (p: number, attempt: number) => {
+    srv.once("error", (e: NodeJS.ErrnoException) => {
+      if (e.code === "EADDRINUSE" && attempt < 10) {
+        console.error(`[vulnhunter-web] 端口 ${p} 被占，试 ${p + 1}`);
+        tryListen(p + 1, attempt + 1);
+      } else {
+        console.error(`[vulnhunter-web] 观察台启动失败（${e.code ?? e}），不影响 workflow`);
+      }
+    });
+    srv.listen(p, host);
+  };
+  srv.once("listening", () => {
+    const addr = srv.address();
+    const url = typeof addr === "object" && addr ? `http://${host}:${addr.port}` : `http://${host}:${port}`;
+    monitorState.log(`web 观察台启动：${url}`);
+    console.error(`[vulnhunter-web] 观察台：${url}`);
+  });
+  tryListen(port, 0);
+  return `http://${host}:${port}`;
 }
 
 // ---------------------------------------------------------------------------
