@@ -267,7 +267,7 @@ async function tick(){
     document.getElementById("runs").innerHTML = s.runs.length === 0 ? '<span class="dim">（本进程还没有 run——驱动跑批或经 vulnhunter 工具启动后可见）</span>' :
       "<table><tr><th>workflow</th><th>runId</th><th>状态</th><th>开始</th><th>目标</th><th></th></tr>" + s.runs.map(r =>
         "<tr><td>" + esc(r.workflow) + "</td><td>" + esc(r.runId) + "</td><td><span class='pill run-" + (r.status==="running"?"ing":r.status==="done"?"ok":"err") + "'>" + r.status + "</span></td><td>" + fmtTs(r.startedAt) + "</td><td class='dim'>" + esc(r.cwd) + "</td><td><a onclick='showRun(&quot;" + encodeURIComponent(r.workdir) + "&quot;,&quot;" + esc(r.runId) + "&quot;)'>[详情]</a></td></tr>").join("") + "</table>";
-    document.getElementById("events").innerHTML = s.events.slice().reverse().map(e => "[" + fmtTs(e.ts) + "] " + esc(e.msg)).join("\n");
+    document.getElementById("events").innerHTML = s.events.slice().reverse().map(e => "[" + fmtTs(e.ts) + "] " + esc(e.msg)).join("\\n");
   } catch (e) { /* 下一轮重试 */ }
 }
 async function showRun(workdir, runId){
