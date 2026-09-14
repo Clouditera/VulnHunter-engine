@@ -495,7 +495,7 @@ const SPA = `<!doctype html>
 @media(max-width:850px){.workspace{grid-template-columns:1fr}.params,.paramset{flex-wrap:wrap}.params{align-items:flex-start}.paramset{gap:9px 20px}.pipeline{grid-template-columns:repeat(3,minmax(0,1fr))}.stagegroups{display:none}.pipeline{margin-bottom:14px}.stage:nth-child(3)::after{display:none}.huntbody{display:grid;grid-template-columns:1fr 1fr;gap:14px}.huntbody .coverage{margin-top:0}.huntbody .notebox{margin-top:10px}.huntbody .metricrow{margin-bottom:10px}.lowergrid{grid-template-columns:1fr}.poolbody{grid-template-columns:minmax(0,1fr) 185px}.previewbar>.row{flex-wrap:wrap}.configgrid{grid-template-columns:1fr 1fr}.topbar{padding-inline:20px}.topbar .service{display:none}.runheading h1{font-size:20px}.layout{padding:17px 16px}.runheading{align-items:flex-start}}
 @media(max-width:520px){.previewbar{padding:7px 16px}.previewbar .hint{display:none}.topbar{padding-inline:16px}.topbar .muted.brandlabel{display:none}.runtime strong{font-size:20px}.runtime .small{font-size:10px}.runheading .row{gap:6px}.runheading{flex-wrap:wrap;gap:12px}.runheading>div:first-child{width:100%}.runtime{display:flex;align-items:baseline;gap:8px;text-align:left;flex-wrap:wrap}.runtime p{margin:0}.runheading .sub{max-width:none;overflow-wrap:anywhere}.huntbody{display:block}.poolbody{grid-template-columns:1fr}.verify{border-right:0}.sandbox{border-top:1px solid var(--border)}.sandbox .mutedslot{height:35px;margin:8px 0}.sandbox hr{margin:8px 0}.sandbox .sandboxextra{display:none}.queuegrid{grid-template-columns:1fr 1fr}.queuetask{font-size:10px}.configgrid{grid-template-columns:1fr}.stage .row{gap:5px}.stage strong{font-size:12px}.stage .stepnum{display:none}.stage .status{font-size:10px}.emptyview{padding:25px 16px}.emptyview .emptycolumns{gap:24px}.history{overflow:auto}.banner{align-items:flex-start}.paramset{gap:8px 15px}}
 </style></head>
-<body>
+
 <header class="topbar row spread"><div class="row"><span class="brandmark"><svg class="icon" viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg></span><span class="brandname">VulnHunter</span><span class="slash">/</span><span class="muted brandlabel">运行观察台</span></div><div class="row muted small"><span class="service mono">runner 观察台</span><span class="badge">只读</span><button id="theme" aria-label="切换主题">浅色</button></div></header>
 <main class="layout" id="main"></main>
 <dialog id="inspector" aria-labelledby="dialogtitle"><div class="panelhead row spread"><h2 id="dialogtitle"></h2><button id="closedialog" aria-label="关闭详情">关闭 ×</button></div><div class="dialogbody" id="dialogbody"></div></dialog><div id="toast" role="status" hidden></div>
@@ -568,9 +568,10 @@ function render() {
   const doneCount = order.filter((k) => stagesObj[k] === "done").length;
 
   // hunt 数据
+  const arrLen = (v) => Array.isArray(v) ? v.length : 0;
   const roundHyps = (state.data && state.data.roundHyps) || {};
   const roundKeys = Object.keys(roundHyps).sort((a, b) => Number(a.replace(/\\D+/g, "")) - Number(b.replace(/\\D+/g, "")));
-  const hypTotal = roundKeys.reduce((n, k) => n + roundKeys[k].length, 0);
+  const hypTotal = roundKeys.reduce((n, k) => n + arrLen(roundHyps[k]), 0);
   const doneRounds = (state.data && state.data.huntRound) || roundKeys.length;
   const cov = detail?.coverage ?? null;
   const threshold = String(cfg.hunt_coverage_threshold ?? "").replace(/[^0-9.]/g, "") || "90";
@@ -604,7 +605,7 @@ function render() {
   // hunt 面板
   const covPct = cov && cov.pct != null ? cov.pct : null;
   const roundsHtml = roundKeys.length
-    ? roundKeys.map((k) => { const n = roundKeys[k].length; const rn = Number(k.replace(/\\D+/g, "")); return \`<div class="round \${n === 0 ? "zero" : ""}"><small>\${rn}</small>\${n}</div>\`; }).join("") + (hunting ? \`<div class="round inprogress"><small>\${doneRounds + 1}</small>·</div>\` : "")
+    ? roundKeys.map((k) => { const n = arrLen(roundHyps[k]); const rn = Number(k.replace(/\\D+/g, "")); return \`<div class="round \${n === 0 ? "zero" : ""}"><small>\${rn}</small>\${n}</div>\`; }).join("") + (hunting ? \`<div class="round inprogress"><small>\${doneRounds + 1}</small>·</div>\` : "")
     : \`<span class="muted small">尚无轮次记录</span>\`;
   const huntNote = (stagesObj.hunt === "pending" || stagesObj.hunt === "skipped" || stagesObj.hunt === undefined)
     ? \`<div class="notebox info">待开始 · init 阶段完成后进入逐轮精读。</div>\`
@@ -667,7 +668,7 @@ document.addEventListener("click", async (e) => {
     e.preventDefault();
     const d = S.lastGood?.detail?.state?.data?.roundHyps ?? {};
     const keys = Object.keys(d).sort((a, b) => Number(a.replace(/\\D+/g, "")) - Number(b.replace(/\\D+/g, "")));
-    modal("逐轮 HYP 产出", \`<pre>\${keys.map((k) => \`\${k}  +\${d[k].length} HYP\`).join("\\n") || "（无）"}</pre><p>主停：覆盖达到阈值且本轮 0 HYP。兜底：连续 3 轮 0 HYP。轮次不默认封顶（除非显式给了 rounds）。</p>\`);
+    modal("逐轮 HYP 产出", \`<pre>\${keys.map((k) => \`\${k}  +\${arrLen(d[k])} HYP\`).join("\\n") || "（无）"}</pre><p>主停：覆盖达到阈值且本轮 0 HYP。兜底：连续 3 轮 0 HYP。轮次不默认封顶（除非显式给了 rounds）。</p>\`);
   }
   else if (action === "events") {
     e.preventDefault();
@@ -689,6 +690,11 @@ document.addEventListener("click", async (e) => {
 $("closedialog").addEventListener("click", () => $("inspector").close());
 $("inspector").addEventListener("click", (e) => { if (e.target === $("inspector")) { const r = $("inspector").getBoundingClientRect(); if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) $("inspector").close(); } });
 $("theme").addEventListener("click", () => { document.documentElement.dataset.theme = document.documentElement.dataset.theme === "dark" ? "light" : "dark"; $("theme").textContent = document.documentElement.dataset.theme === "dark" ? "浅色" : "深色"; });
+// 渲染崩溃兜底：报错进页面，不留白屏（09-14 链阶段 undefined.length 实踩）
+window.addEventListener("error", (e) => {
+  const m = $("main");
+  if (m && !m.textContent.trim()) m.innerHTML = \`<div class="banner"><span><strong>页面渲染异常</strong> · \${esc(e.message)}<br><span class="small muted">\${esc(String(e.filename).split("/").pop())}:\${e.lineno}——数据未丢失，等下一轮自刷或刷新页面。</span></span></div>\`;
+});
 setInterval(tick, 3000); tick();
 
 </script></body></html>`;
