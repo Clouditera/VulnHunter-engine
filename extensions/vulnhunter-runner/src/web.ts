@@ -134,7 +134,7 @@ function readdirSyncSafe(d: string): string[] {
 // knowledge/ 是共享货架只增不消耗；findings/BUG-* 是成品。
 // ---------------------------------------------------------------------------
 
-interface LineageEntry { ts?: string; id?: string; action?: string; agent?: string; label?: string; target?: string }
+interface LineageEntry { ts?: string; id?: string; action?: string; agent?: string; label?: string; target?: string; file?: string }
 
 function buildStageDetail(workdir: string, runId: string, stage: string) {
   if (!workdir || !runId || !stage) return { error: "缺 workdir/runId/stage" };
@@ -194,14 +194,14 @@ function buildStageDetail(workdir: string, runId: string, stage: string) {
     metrics.refuted = marks.filter((m) => /refuted/.test(m)).length;
     metrics.findingsProduced = queues.findings.length;
   }
-  // 该窗内的会话（start/end 配对出耗时；sessionFile 仅活态可查）
-  const sessMap = new Map<string, { id: string; agent?: string; target?: string; startTs?: string; endTs?: string }>();
+  // 该窗内的会话（start/end 配对出耗时；file=会话 jsonl（start 条目携带），可深链 /session 详情页）
+  const sessMap = new Map<string, { id: string; agent?: string; target?: string; startTs?: string; endTs?: string; file?: string }>();
   for (const e of lineage) {
     if (!e.id) continue;
     const s = sessMap.get(e.id) ?? { id: e.id };
     if (e.agent) s.agent = e.agent;
     if (e.target) s.target = e.target;
-    if (e.action === "start") s.startTs = e.ts;
+    if (e.action === "start") { s.startTs = e.ts; if (e.file) s.file = e.file; }
     if (e.action === "end") s.endTs = e.ts;
     sessMap.set(e.id, s);
   }

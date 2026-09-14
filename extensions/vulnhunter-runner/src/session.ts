@@ -139,7 +139,8 @@ export async function startSession(ctx: SessionCtx, opts: {
 
   // 监控 + hunt 覆盖记录（hunt 精读=覆盖率唯一口径）
   monitorState.nodeStart(id, { id, agent: opts.agent, target: opts.binding?.advId ?? opts.binding?.hypId, startTs: Date.now(), workdir: ctx.workdir, cwd: ctx.cwd });
-  try { const sf = (sess as any).sessionManager?.getSessionFile?.(); if (sf) monitorState.nodeSession(id, sf); } catch { /* 无碍 */ }
+  let sessFile: string | undefined;
+  try { sessFile = (sess as any).sessionManager?.getSessionFile?.(); if (sessFile) monitorState.nodeSession(id, sessFile); } catch { /* 无碍 */ }
   const cov = getCoveragePaths(ctx.workdir);
   const covCfg = loadCoverageConfig(ctx.workdir);
   let covOn = opts.agent === "hunt";
@@ -266,6 +267,6 @@ export async function startSession(ctx: SessionCtx, opts: {
     },
   };
 
-  lineage(ctx.workdir, { id, action: "start", agent: opts.agent, resumed: !!opts.sessionFile });
+  lineage(ctx.workdir, { id, action: "start", agent: opts.agent, resumed: !!opts.sessionFile, file: sessFile });
   return handle;
 }
