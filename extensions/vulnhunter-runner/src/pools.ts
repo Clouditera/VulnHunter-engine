@@ -13,7 +13,7 @@ import { monitorState } from "./monitor-state.ts";
 
 export class Pool {
   private running = 0;
-  private waiters: (() => void)[] = [];
+  private waiters: { tag: string; resolve: () => void }[] = [];
   private seq = 0;
 
   constructor(
@@ -29,9 +29,9 @@ export class Pool {
   async run<T>(fn: () => Promise<T>, label?: string): Promise<T> {
     const tag = label ?? `#${++this.seq}`;
     if (this.running >= this.maxConcurrent) {
-      monitorState.poolQueue(this.name, this.waiters.length + 1);
-      await new Promise<void>((resolve) => this.waiters.push(resolve));
-      monitorState.poolQueue(this.name, this.waiters.length);
+      monitorState.poolQueue(this.name, [...this.waiters.map((w) => w.tag), tag]);
+      await new Promise<void>((resolve) => this.waiters.push({ tag, resolve }));
+      monitorState.poolQueue(this.name, this.waiters.map((w) => w.tag));
     }
     this.running++;
     monitorState.poolAcquire(this.name, tag);
@@ -41,7 +41,7 @@ export class Pool {
       this.running--;
       monitorState.poolRelease(this.name, tag);
       const next = this.waiters.shift();
-      if (next) next();
+      if (next) next.resolve();
     }
   }
 

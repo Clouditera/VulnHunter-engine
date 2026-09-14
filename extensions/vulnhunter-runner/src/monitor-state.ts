@@ -19,7 +19,7 @@ export interface PoolInfo {
   name: string;
   max: number;
   active: Map<string, number>;  // label → 开始时间戳
-  queued: number;
+  queued: string[];            // 排队任务标签（09-14 designer 主页需要明细）
 }
 
 export interface RunInfo {
@@ -53,7 +53,7 @@ export const monitorState = {
     if (events.length > MAX_EVENTS) events.splice(0, events.length - MAX_EVENTS);
   },
 
-  poolRegister(name: string, max: number) { if (!pools.has(name)) pools.set(name, { name, max, active: new Map(), queued: 0 }); },
+  poolRegister(name: string, max: number) { if (!pools.has(name)) pools.set(name, { name, max, active: new Map(), queued: [] }); },
   poolAcquire(name: string, label: string) {
     const p = pools.get(name);
     if (p) p.active.set(label, Date.now());
@@ -62,7 +62,7 @@ export const monitorState = {
     const p = pools.get(name);
     if (p) p.active.delete(label);
   },
-  poolQueue(name: string, n: number) { const p = pools.get(name); if (p) p.queued = n; },
+  poolQueue(name: string, labels: string[]) { const p = pools.get(name); if (p) p.queued = labels; },
 
   runStart(info: RunInfo) {
     const key = `${info.workdir}::${info.runId}`;
