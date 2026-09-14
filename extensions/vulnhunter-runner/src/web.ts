@@ -68,6 +68,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   const u = new URL(req.url ?? "/", "http://localhost");
   if (u.pathname === "/api/state") return sendJson(res, buildState());
   if (u.pathname === "/api/run") return sendJson(res, buildRun(u.searchParams.get("workdir") ?? "", u.searchParams.get("runId") ?? ""));
+  if (u.pathname === "/api/stage") return sendJson(res, buildStageDetail(u.searchParams.get("workdir") ?? "", u.searchParams.get("runId") ?? "", u.searchParams.get("stage") ?? ""));
   if (u.pathname === "/session") return sendHtml(res, renderSession(u.searchParams.get("file") ?? ""));
   return sendHtml(res, SPA);
 }
@@ -125,6 +126,92 @@ function buildRun(workdir: string, runId: string) {
 
 function readdirSyncSafe(d: string): string[] {
   try { return readdirSync(d); } catch { return []; }
+}
+
+// ---------------------------------------------------------------------------
+// 阶段详情（09-14 fish「工厂模式」：点阶段卡看一台机器的投入/产出/加工）
+// 物料模型以 queue.ts 为准：leads（待消费库存）→ todo（派发即移=排队+加工中）→ done（已裁决）；
+// knowledge/ 是共享货架只增不消耗；findings/BUG-* 是成品。
+// ---------------------------------------------------------------------------
+
+interface LineageEntry { ts?: string; id?: string; action?: string; agent?: string; label?: string; target?: string }
+
+function buildStageDetail(workdir: string, runId: string, stage: string) {
+  if (!workdir || !runId || !stage) return { error: "缺 workdir/runId/stage" };
+  let state: Record<string, any> | null = null;
+  try { state = JSON.parse(readFileSync(join(workdir, "runs", `audit-lite-${runId}.json`), "utf-8")); } catch { /* 无 run-state */ }
+  const t = state?.data?.stageTimes?.[stage] ?? null;
+  const start = t?.start ? Date.parse(t.start) : null;
+  const end = start != null ? (t?.ms != null ? start + t.ms : Date.now()) : null;
+
+  // lineage 按阶段时间窗切片（±2s 缓冲）
+  let lineage: LineageEntry[] = [];
+  try {
+    lineage = readFileSync(join(workdir, "sessions-lineage.jsonl"), "utf-8").trim().split("\n")
+      .map((l) => { try { return JSON.parse(l) as LineageEntry; } catch { return null; } })
+      .filter((e): e is LineageEntry => !!e)
+      .filter((e) => {
+        if (start == null) return true;
+        const ts = e.ts ? Date.parse(e.ts) : NaN;
+        return Number.isFinite(ts) && ts >= start - 2000 && (end == null || ts <= end + 2000);
+      });
+  } catch { /* 无 lineage */ }
+
+  // 队列快照（当前盘面；历史时刻深度只能从 lineage 推，不猜）
+  const ls = (d: string, re?: RegExp) => readdirSyncSafe(join(workdir, d)).filter((f) => !re || re.test(f));
+  const queues = {
+    stockHyp: ls("leads", /^HYP-.+\.md$/),      // 未派发库存（可能含异常退回的重派件）
+    inflightHyp: ls("todo", /^HYP-.+\.md$/),   // 已派发=池内排队+加工中
+    archivedHyp: ls("done", /^HYP-.+\.md$/),   // 已裁决归档
+    adv: ls("leads", /^ADV-.+\.md$/),
+    leads: ls("leads", /^LEAD-.+\.md$/),
+    findings: ls("findings", /^BUG-/),
+  };
+
+  // 货架（knowledge/ 共享知识）
+  const knowledge = {
+    profiler: existsSync(join(workdir, "knowledge", "profiler.yaml")),
+    build: readdirSyncSafe(join(workdir, "knowledge", "build")),
+    research: readdirSyncSafe(join(workdir, "knowledge", "research")),
+    wiki: readdirSyncSafe(join(workdir, "knowledge", "wiki")),
+    coverageMap: existsSync(join(workdir, "knowledge", "coverage", "code-reading-coverage.json")),
+  };
+
+  // 阶段指标
+  const data = state?.data ?? {};
+  const metrics: Record<string, unknown> = {};
+  if (stage === "hunt") {
+    metrics.rounds = data.huntRound ?? null;
+    metrics.roundHyps = Object.fromEntries(Object.entries(data.roundHyps ?? {}).map(([k, v]) => [k, Array.isArray(v) ? v.length : 0]));
+    metrics.roundSigma = data.roundSigma ?? {};
+    metrics.zeroStreak = data.huntZeroStreak ?? null;
+  }
+  if (stage === "chains") {
+    const marks = lineage.filter((e) => e.action === "mark").map((e) => String(e.label ?? ""));
+    metrics.confirmed = marks.filter((m) => /confirmed/.test(m)).length;
+    metrics.refuted = marks.filter((m) => /refuted/.test(m)).length;
+    metrics.findingsProduced = queues.findings.length;
+  }
+  // 该窗内的会话（start/end 配对出耗时；sessionFile 仅活态可查）
+  const sessMap = new Map<string, { id: string; agent?: string; target?: string; startTs?: string; endTs?: string }>();
+  for (const e of lineage) {
+    if (!e.id) continue;
+    const s = sessMap.get(e.id) ?? { id: e.id };
+    if (e.agent) s.agent = e.agent;
+    if (e.target) s.target = e.target;
+    if (e.action === "start") s.startTs = e.ts;
+    if (e.action === "end") s.endTs = e.ts;
+    sessMap.set(e.id, s);
+  }
+
+  return {
+    stage, runId, workdir,
+    status: state?.stages?.[stage] ?? null,
+    window: start != null ? { start, ms: t?.ms ?? null } : null,
+    queues, knowledge, metrics,
+    sessions: [...sessMap.values()],
+    lineage,
+  };
 }
 
 // ---------------------------------------------------------------------------
