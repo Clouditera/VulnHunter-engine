@@ -72,6 +72,8 @@ export interface StagedWorkflow {
   name: string;
   description: string;
   stages(wfCtx: WorkflowContext): StageDef[];   // 阶段表可按参数生成（如轮数）
+  /** 自报解析后有效配置（默认值已落），进 RunInfo.config 给观察台展示（09-14 designer） */
+  configView?(wfCtx: WorkflowContext): Record<string, unknown>;
 }
 
 export function defineStagedWorkflow(w: StagedWorkflow): StagedWorkflow { return w; }
@@ -144,7 +146,7 @@ export async function runStages(wf: StagedWorkflow, ctx: WorkflowContext, opts: 
 
   // 观察台：env 开门即起（VULNHUNTER_WEB/PORT/HOST），驱动跑批也能被观察（fish 09-14）
   ensureWebService();
-  monitorState.runStart({ runId, workflow: wf.name, workdir: ctx.workdir, cwd: ctx.cwd, startedAt: Date.now(), status: "running", sandbox: !!ctx.params.sandbox_cfg });
+  monitorState.runStart({ runId, workflow: wf.name, workdir: ctx.workdir, cwd: ctx.cwd, startedAt: Date.now(), status: "running", sandbox: !!ctx.params.sandbox_cfg, config: wf.configView?.(ctx) });
 
   let active = !opts.from && !opts.only;
   for (const st of stages) {
@@ -153,6 +155,7 @@ export async function runStages(wf: StagedWorkflow, ctx: WorkflowContext, opts: 
     if (!active) continue;
     if (!opts.only && state.stages[st.name] === "done") continue;   // 断点续跑跳过已完成
     ctx.report(`—— 阶段 ${st.name} ——`);
+    monitorState.runStage(ctx.workdir, runId, st.name);
     try {
       await st.run(sctx);
       state.stages[st.name] = "done"; save();

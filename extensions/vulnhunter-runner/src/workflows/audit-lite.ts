@@ -21,7 +21,7 @@ import { Pool } from "../pools.ts";
 import { runHypChain } from "./lib.ts";
 import { buildPrompt } from "../session.ts";
 import { getCoveragePaths, loadCoverageMap, aggregateCoverageEvents } from "../../node-ext/code-coverage/coverage-core.ts";
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const COMPACT_INIT = "保留：项目画像与威胁模型要点、构建部署要点、关键代码区域与行号、漏洞认可口径、检索到的情报结论。丢弃：过程性输出与重复细节。摘要正文控制在 4000 字以内。";
@@ -34,6 +34,27 @@ const advCount = (ctx: WorkflowContext) => lsdir(ctx, "leads").filter((f) => f.s
 const liteWorkflow = defineStagedWorkflow({
   name: "audit-lite",
   description: "轻量 run（<1万行）：init 三段→压缩跳转→hunt 分支往返→HYP 链按出生轮 fork",
+
+  // 观察台自报有效配置（09-14 designer）：默认值在此解析，前端不猜
+  configView(ctx) {
+    let model = "（会话默认）";
+    try {
+      const s = JSON.parse(readFileSync(join(ctx.engineDir, "settings.json"), "utf-8"));
+      if (s.defaultProvider && s.defaultModel) model = `${s.defaultProvider}/${s.defaultModel}`;
+    } catch { /* 无碍 */ }
+    return {
+      model,
+      vuln_focus: ctx.params.vuln_focus ?? "（全方向）",
+      rounds: ctx.params.rounds ?? "（无上限）",
+      hunt_mode: ctx.params.hunt_mode ?? "积累制",
+      hunt_coverage_threshold: `${ctx.params.hunt_coverage_threshold ?? "90"}%`,
+      chain_filter: ctx.params.chain_filter ?? "全部",
+      chain_concurrency: ctx.params.chain_concurrency ?? "3",
+      sandbox: ctx.params.sandbox_cfg ?? "（无，纯静态）",
+      coverage_include: ctx.params.coverage_include ?? ".",
+      coverage_exclude: ctx.params.coverage_exclude ?? "（无）",
+    };
+  },
 
   stages(ctx) {
     const chainK = ctx.params.chain_filter ? Number(ctx.params.chain_filter) : Infinity;

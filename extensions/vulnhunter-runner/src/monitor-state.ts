@@ -32,6 +32,8 @@ export interface RunInfo {
   status: "running" | "done" | "error";
   note?: string;
   sandbox?: boolean;   // 本 run 是否启用沙箱（sandbox_cfg 有无）——主页区分 sandbox 池“未启用/空闲”（09-14 designer）
+  currentStage?: string;          // 阶段开始时写实（09-14 designer：--from/--only 下从 pending 猜不准）
+  config?: Record<string, unknown>; // workflow 自报的解析后有效配置（默认值已落，前端不猜）
 }
 
 const running = new Map<string, RunningNode>();
@@ -77,5 +79,9 @@ export const monitorState = {
   runEnd(workdir: string, runId: string, status: "done" | "error", note?: string) {
     const r = runs.get(`${workdir}::${runId}`);
     if (r) { r.status = status; r.endedAt = Date.now(); if (note) r.note = note; }
+  },
+  runStage(workdir: string, runId: string, stage: string) {
+    const r = runs.get(`${workdir}::${runId}`);
+    if (r) r.currentStage = stage;
   },
 };
