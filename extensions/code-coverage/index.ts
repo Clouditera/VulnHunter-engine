@@ -44,7 +44,6 @@ export default function (pi: ExtensionAPI) {
       recordReadCoverageEvent({
         jsonlPath,
         targetRoot,
-        outputDir: resolvedOutputDir,
         stage,
         input: event.input as { path?: string; offset?: number; limit?: number } | undefined,
       });
