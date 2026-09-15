@@ -4,7 +4,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 const engineDir = "/home/lhy/dev/llm/VulnHunter-engine";
 const cwd = "/tmp/lite-target";
 
-const mod = await import(`${engineDir}/extensions/vulnhunter-runner/.dist/workflows/audit-lite.js`);
+const mod = await import(`${engineDir}/extensions/vulnhunter-runner/.dist/src/workflows/audit-lite.js`);
 const run = mod.run;
 
 const ctx = {

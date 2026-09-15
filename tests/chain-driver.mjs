@@ -1,7 +1,7 @@
 // HYP 链阶段单测驱动：复活 init → 对 leads 里的 HYP 逐条跑 runHypChain（verify only，不动态）
 import { Pool } from "../extensions/vulnhunter-runner/.dist/pools.js";
-import { startSession } from "../extensions/vulnhunter-runner/extensions/vulnhunter-runner/.dist/session.js";
-import { runHypChain } from "./extensions/vulnhunter-runner/.dist/workflows/lib.js";
+import { startSession } from "../extensions/vulnhunter-runner/extensions/vulnhunter-runner/.dist/src/session.js";
+import { runHypChain } from "./extensions/vulnhunter-runner/.dist/src/workflows/lib.js";
 import { pending } from "../extensions/vulnhunter-runner/.dist/queue.js";
 import { readFileSync } from "node:fs";
 

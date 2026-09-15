@@ -1,7 +1,7 @@
 // artifact 元工具冒烟：真实会话走 list→spec→create hyp→query hyp
 import { existsSync, readdirSync, readFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { startSession, buildPrompt } from "/home/lhy/dev/llm/VulnHunter-engine/extensions/vulnhunter-runner/.dist/session.js";
+import { startSession, buildPrompt } from "/home/lhy/dev/llm/VulnHunter-engine/extensions/vulnhunter-runner/.dist/src/session.js";
 
 const engineDir = "/home/lhy/dev/llm/VulnHunter-engine";
 const cwd = "/home/lhy/dev/llm/VulLab/darkhttpd";

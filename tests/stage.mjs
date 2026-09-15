@@ -5,7 +5,7 @@
 // 状态：/tmp/lite-target/.vulnforge/stage-state.json（init 会话文件路径 + 进度标记）
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { startSession, buildPrompt } from "/home/lhy/dev/llm/VulnHunter-engine/extensions/vulnhunter-runner/.dist/session.js";
+import { startSession, buildPrompt } from "/home/lhy/dev/llm/VulnHunter-engine/extensions/vulnhunter-runner/.dist/src/session.js";
 
 const engineDir = "/home/lhy/dev/llm/VulnHunter-engine";
 const cwd = "/tmp/lite-target";
