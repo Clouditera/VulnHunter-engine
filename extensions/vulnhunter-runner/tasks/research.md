@@ -11,7 +11,7 @@
 - git 考古：跑 git log/tag 查版本演进、安全修复史、回退记录与变更热点，补在线检索之外的线索。
 - **漏洞认可口径 online 增量**：补官方安全策略与漏洞提交政策、历史漏洞的维护者处置态度（认可修复还是 won't fix）、issue/PR 表态，写进 `knowledge/vuln-policy.md`。
 - **wiki 更新**：值得沉淀的项目背景与攻击面认知写入 `knowledge/wiki/`（write/edit）。
-- **审计链路**：情报指向值得深挖的代码区域时，用 `artifact create adv` 落审计链路；源码只在落 ADV 前做存在性抽查（确认函数/文件还在、位置正确），精读交给 hunt/cognize。
+- **审计链路**：情报指向值得深挖的代码区域时，用 `artifact create adv` 落审计链路；源码只在落 ADV 前做存在性抽查（确认函数/文件还在、位置正确），精读交给 hunt。
 - **回流线索**：值得追加检索的新方向，用 `artifact create lead` 记录。
 - 在线与 git 通道都缺失、且对项目没有明确记忆时，如实收尾；零产出是合法结果，情报只写有出处的。
 

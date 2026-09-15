@@ -25,18 +25,18 @@ export interface WsContext {
 
 /** 节点绑定的编号上下文（runner 拉起节点时注入） */
 export interface FnBinding {
-  /** cognize/research 的运行序号（emit_adv 取号用） */
+  /** research 的运行序号（emit_adv 取号用） */
   runNo?: number;
   /** hunt 正在消费的 ADV id（emit_hyp 继承编号用），如 ADV-C1-A2 */
   advId?: string;
-  /** verify 正在研判的 HYP id（emit_finding 继承编号用），如 HYP-C1-A2-H3 */
+  /** 链会话正在研判的 HYP id（emit_finding 继承编号用），如 HYP-C1-A2-H3 */
   hypId?: string;
-  /** ADV 线别（artifact 元工具化后 create adv 用；C=cognize / S=research） */
+  /** ADV 线别（artifact 元工具化后 create adv 用；C=初线 / S=research） */
   advLine?: "C" | "S";
 }
 
 export type FnKind =
-  | "emit_adv_c" | "emit_adv_s"          // C 线（cognize）/ S 线（research）
+  | "emit_adv_c" | "emit_adv_s"          // C 线（初线）/ S 线（research）
   | "emit_hyp" | "emit_lead" | "emit_finding"
   | "update_finding" | "update_build_state" | "update_profiler";
 

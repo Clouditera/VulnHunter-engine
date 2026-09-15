@@ -31,18 +31,10 @@ export const NODES: Record<string, NodeSpec> = {
     skills: ["project-profiler", "threat-modeling", "wiki-maintainer", "audit-chain"],
     extensions: ["pi-web-access", "code-coverage"],   // code-coverage：hunt 多轮自查阅读覆盖（fish 09-11）
   },
-  cognize: {
-    skills: ["wiki-maintainer", "audit-chain"],
-    extensions: ["code-coverage"],   // coverage 查询工具（记录侧由 hunt 独占）
-  },
   hunt: {
   },
   /** 直觉评测专用：静态局部审计，只产 HYP（无 lead/无沙箱） */
   "hunt-intuition": {
-  },
-  verify: {
-    skills: ["bug-report", "wiki-maintainer"],
-    extensions: ["pi-web-access"],                    // 政策核验的在线查证
   },
   /** static-verify：无沙箱时的纯静态裁决（fish 09-10） */
   "static-verify": {
@@ -54,17 +46,12 @@ export const NODES: Record<string, NodeSpec> = {
     skills: ["bug-report", "wiki-maintainer"],
     extensions: ["pi-web-access"],
   },
-  /** HYP 链节点（verify→poc-verify→ev-assess 同会话）：函数取三阶段并集（fish 09-05 最简 run） */
+  /** HYP 链节点（static/dynamic-verify → ev-assess 同会话） */
   "hyp-chain": {
     skills: ["bug-report", "wiki-maintainer"],
     extensions: ["pi-web-access"],
   },
-  "poc-verify": {
-    skills: ["bug-report"],
-  },
   "ev-assess": {
     skills: ["bug-report"],
-  },
-  "exp-build": {
   },
 };

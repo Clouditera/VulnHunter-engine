@@ -30,7 +30,7 @@ export interface LibCtx extends SessionCtx {
 // ---------------------------------------------------------------------------
 
 export interface HypChainOpts {
-  /** 是否启动动态环节（poc-verify/ev-assess）；默认按 sandbox_cfg 有无 */
+  /** 是否启动动态环节（dynamic-verify/ev-assess）；默认按 sandbox_cfg 有无 */
   dynamic?: boolean;
   /** fork 点标记（默认 verify-start；轻量版传出生轮 huntN-done 前缀匹配） */
   forkPoint?: string;

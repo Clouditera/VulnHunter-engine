@@ -16,7 +16,7 @@ export interface NodeOptions {
   task: string;
   /** 附加行（如 todo 路径："审计链路：todo/ADV-C1-A2.md"） */
   extra?: string;
-  /** 编号绑定上下文（hunt→advId / verify→hypId / cognize·research→runNo） */
+  /** 编号绑定上下文（hunt→advId / 链→hypId / research→runNo） */
   binding?: FnBinding;
   /** 覆盖默认超时 */
   timeoutMs?: number;
