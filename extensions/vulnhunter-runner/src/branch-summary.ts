@@ -2,12 +2,13 @@
  * 自研分支摘要（fish 09-11：主动触发的能力，不依赖 pi 的摘要器）。
  *
  * 等价于 pi tree 的 branch summary，但全链路自控：
- * - 条目收集：沿 parentId 从当前叶走到目标标记（不依赖 pi 内部函数）；
+ * - 条目收集：沿 parentId 从当前叶走到挂载点（不依赖 pi 内部函数）；
  * - 序列化：我们自己把条目流压成文本（thinking 截断、toolResult 截断、标记/前序摘要保留）；
  * - 模型调用：直连 provider（我们的 provider 全是 openai-completions 兼容），思考恒开启、
  *   maxTokens 我们自己定——pi 的 4096 硬编码与 thinking 丢失两个上游缺陷从此与我们无关；
- * - 落树：SessionManager.branchWithSummary（pi 公开 API）把摘要挂到目标节点下并推进叶子，
- *   再打标、同步 agent 内存态（与 navigateTree 末尾同款）。
+ * - 落树：SessionManager.branchWithSummary（pi 公开 API）把摘要挂到起处的前驱并推进叶子，
+ *   再打标、同步 agent 内存态（与 navigateTree 末尾同款）。task summary 语义（fish 09-15）：
+ *   闭区间 [起, 止] 含两端——起 = 标记所指节点（任务开始处），止 = 当前叶（收尾）；整段原位替换。
  */
 
 import { readFileSync } from "node:fs";
@@ -34,19 +35,33 @@ interface SMLike {
   buildSessionContext(): { messages: unknown[] };
 }
 
-/** 从叶子沿 parentId 走到 targetId，收集区间内的条目（含叶子，不含 target 本身） */
-function collectPath(sm: SMLike, targetId: string): Array<Record<string, unknown>> {
+/** 从叶子沿 parentId 走到 stopId，收集区间内的条目（含叶子与起处本体，不含挂载点本身） */
+function collectPath(sm: SMLike, stopId: string): Array<Record<string, unknown>> {
   const byId = new Map(sm.getEntries().map((e) => [e.id, e]));
   const out: Array<Record<string, unknown>> = [];
   let cur = sm.getLeafId();
   let guard = 0;
-  while (cur && cur !== targetId && guard++ < 100000) {
+  while (cur && cur !== stopId && guard++ < 100000) {
     const e = byId.get(cur);
     if (!e) break;
     out.unshift(e);
     cur = e.parentId;
   }
   return out;
+}
+
+/** stopId 是否在当前叶的上行路径上（挂载点安全检查） */
+function pathReaches(sm: SMLike, stopId: string): boolean {
+  const byId = new Map(sm.getEntries().map((e) => [e.id, e]));
+  let cur = sm.getLeafId();
+  let guard = 0;
+  while (cur && guard++ < 100000) {
+    if (cur === stopId) return true;
+    const e = byId.get(cur);
+    if (!e) break;
+    cur = e.parentId;
+  }
+  return false;
 }
 
 function clip(s: string, n: number): string {
@@ -92,13 +107,14 @@ function resolveProvider(engineDir: string, provider: string, modelId: string): 
   return { baseUrl: p.baseUrl, apiKey, modelId };
 }
 
-/** 主入口：从当前叶摘要到 targetLabel 标记节点，摘要挂载在目标下并推进叶子 */
+/** 主入口：task summary——从当前叶摘要回「起处」（targetLabel 所指节点），闭区间含两端，
+ *  摘要挂到起处的前驱并推进叶子（fish 09-15 定稿） */
 export async function branchSummarize(
   sess: { sessionManager: SMLike; model?: { provider: string; id: string } },
   engineDir: string,
   targetLabel: string,
   opts: { summaryLabel: string; guide?: string },
-): Promise<{ summaryId: string; usage: unknown }> {
+): Promise<{ summaryId: string; usage: unknown; targetId: string; attachId: string; fromId?: string; coveredIds: string[] }> {
   const sm = sess.sessionManager;
   const entries = sm.getEntries();
   const target = entries.find((e) => sm.getLabel(e.id) === targetLabel)
@@ -106,7 +122,12 @@ export async function branchSummarize(
   if (!target) throw new Error(`分支摘要失败：会话树上没有标记 "${targetLabel}"`);
   if (sm.getLeafId() === target.id) throw new Error(`分支摘要跳过：叶子已在 "${targetLabel}"`);
 
-  const slice = collectPath(sm, target.id);
+  // task summary 语义（fish 09-15）：起 = 标记所指节点（含），止 = 当前叶（含）；
+  // 摘要挂到「起的前驱」——整段原位替换；前驱不在路径上时（异常调用）退回挂回起处自身。
+  const attachCandidate: string | null = (target as { parentId?: string | null }).parentId ?? null;
+  const attachId: string = attachCandidate && pathReaches(sm, attachCandidate) ? attachCandidate : target.id;
+  const fromId = sm.getLeafId() ?? undefined;
+  const slice = collectPath(sm, attachId);
   if (!slice.length) throw new Error("分支摘要跳过：区间内没有条目");
   const text = serializeEntries(slice);
   const model = sess.model;
@@ -134,10 +155,10 @@ export async function branchSummarize(
   const summary = j.choices?.[0]?.message?.content?.trim();
   if (!summary) throw new Error("分支摘要模型调用返回空内容");
 
-  const summaryId = sm.branchWithSummary(target.id, summary, { guide: opts.guide?.slice(0, 300) }, true, j.usage);
+  const summaryId = sm.branchWithSummary(attachId, summary, { guide: opts.guide?.slice(0, 300) }, true, j.usage);
   if (opts.summaryLabel) sm.appendLabelChange(summaryId, opts.summaryLabel);
   // 同步 agent 内存态（与 pi navigateTree 末尾一致）
   const agentState = (sess as unknown as { agent?: { state?: { messages?: unknown[] } } }).agent?.state;
   if (agentState) agentState.messages = sm.buildSessionContext().messages;
-  return { summaryId, usage: j.usage };
+  return { summaryId, usage: j.usage, targetId: target.id, attachId, fromId, coveredIds: slice.map((e) => String(e.id)) };
 }

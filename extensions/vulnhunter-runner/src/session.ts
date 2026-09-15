@@ -15,9 +15,10 @@ import {
   createAgentSession, DefaultResourceLoader, SettingsManager, SessionManager, parseFrontmatter,
   type AgentSession, type AgentSessionEvent,
 } from "@earendil-works/pi-coding-agent";
-import { appendFileSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { NODES, type NodeSpec } from "./nodes.ts";
+import { lineage, OpsCounter, tasksCovering } from "./ledger.ts";
 import { type FnBinding, type WsContext } from "./workspace-tools.ts";
 import { makeArtifactTool } from "./artifact.ts";
 import { monitorState } from "./monitor-state.ts";
@@ -35,8 +36,9 @@ export interface SessionHandle {
   readonly id: string;
   readonly agent: string;
   /** 发送任务并等待完成；pi 异常按 runtime 裁定重试/恢复（连续 3 次=API 不可用，aborted=true）。
-   *  marks.start/done：发送后/完成后自动打标（fish 09-09 打标规则内化） */
-  prompt(text: string, marks?: { start?: string; done?: string }): Promise<{ aborted: boolean }>;
+   *  marks.start/done：发送后/完成后自动打标（fish 09-09 打标规则内化）；
+   *  marks.label：任务标签（台账用，缺省不记）；任务起止/时长/attempt/操作计数自动记入台账（fish 09-15） */
+  prompt(text: string, marks?: { start?: string; done?: string; label?: string }): Promise<{ aborted: boolean }>;
   /** 纯打标记（当前叶子位置） */
   mark(label: string): void;
   /** 当前上下文占用百分比（pi getContextUsage；未知返回 null） */
@@ -85,10 +87,21 @@ export function buildPrompt(ctx: SessionCtx, agentName: string, task: string, ex
   ].filter(Boolean).join("\n\n");
 }
 
-function lineage(workdir: string, rec: Record<string, unknown>): void {
-  try { appendFileSync(join(workdir, "sessions-lineage.jsonl"), JSON.stringify({ ts: new Date().toISOString(), ...rec }) + "\n"); } catch { /* 血缘记录失败无碍 */ }
+/** 从 end 沿 parentId 上溯到 preLeaf，取链上最早的用户消息条目 = 任务起点（重试轮取首个 prompt） */
+function findTaskStart(sm: SessionManager, preLeaf: string | null, endEntry?: string): string | undefined {
+  const byId = new Map(sm.getEntries().map((e) => [e.id, e]));
+  let cur: string | null = endEntry ?? null;
+  let found: string | undefined;
+  let guard = 0;
+  while (cur && cur !== preLeaf && guard++ < 200000) {
+    const e = byId.get(cur);
+    if (!e) break;
+    const m = e as unknown as { type?: string; message?: { role?: string } };
+    if (m.type === "message" && m.message?.role === "user") found = e.id;   // 持续覆写 → 最后留下最早的一条
+    cur = (e.parentId as string | null) ?? null;
+  }
+  return found;
 }
-
 async function createSession(ctx: SessionCtx, agentName: string, binding: FnBinding, sessionManager?: SessionManager): Promise<{ sess: AgentSession; spec: NodeSpec; customTools: ReturnType<typeof makeArtifactTool>[] }> {
   const spec: NodeSpec | undefined = NODES[agentName];
   if (!spec) throw new Error(`未知节点: ${agentName}（nodes.ts 未定义）`);
@@ -181,7 +194,20 @@ export async function startSession(ctx: SessionCtx, opts: {
     }
   });
 
+  // 操作计数（task 区间聚合：全节点通用，fish 09-15）——pi 的 end 事件不带 args，start 暂存参数
+  const ops = new OpsCounter();
+  sess.subscribe((ev: AgentSessionEvent) => {
+    const e = ev as unknown as { type?: string; toolCallId?: string; toolName?: string; args?: unknown; result?: unknown; isError?: boolean };
+    if (e.type === "tool_execution_start") ops.onStart(String(e.toolCallId ?? ""), String(e.toolName ?? ""), e.args);
+    else if (e.type === "tool_execution_end") {
+      let r = "";
+      try { r = typeof e.result === "string" ? e.result : JSON.stringify(e.result ?? ""); } catch { r = ""; }
+      ops.onEnd(String(e.toolCallId ?? ""), String(e.toolName ?? ""), !!e.isError, r);
+    }
+  });
+
   let closed = false;
+  let taskSeq = 0;
   const flushCoverage = () => {
     if (!cov) return;
     const map = loadCoverageMap(cov.jsonPath, ctx.cwd, ctx.workdir);
@@ -192,23 +218,53 @@ export async function startSession(ctx: SessionCtx, opts: {
     id,
     agent: opts.agent,
 
-    async prompt(text: string, marks?: { start?: string; done?: string }) {
+    async prompt(text: string, marks?: { start?: string; done?: string; label?: string }) {
+      // 任务台账（fish 09-15）：task = 一次 prompt 完整生命周期；start/end 条目、时长、attempt、操作计数
+      const taskId = `${id}#t${++taskSeq}`;
+      const startedAt = Date.now();
+      const smP = (sess as any).sessionManager as SessionManager;
+      const preLeaf = smP.getLeafId();
+      const target = bindingRef.hypId ?? bindingRef.advId;
+      const preview = text.replace(/\s+/g, " ").slice(0, 160);
+      ops.reset();   // 计数窗口 = 本任务
       let failures = 0;
       let pending = text;
       let firstTry = true;
       for (;;) {
         try {
-          if (firstTry && marks?.start) handle.mark(marks.start);   // 任务发出前打 start（pi 的 prompt 会阻塞到完成，只能打在提交前——树序正确：start 标在用户消息前）
+          if (firstTry) {
+            if (marks?.start) handle.mark(marks.start);   // 任务发出前打 start（pi 的 prompt 会阻塞到完成，只能打在提交前——树序正确：start 标在用户消息前）
+            lineage(ctx.workdir, {
+              id, action: "task-start", task: taskId, file: sessFile, agent: opts.agent, target,
+              label: marks?.label, marks: marks ? { start: marks.start, done: marks.done } : undefined, prompt: preview,
+            });
+          }
           firstTry = false;
           await sess.prompt(pending);
           await sess.waitForIdle();
           flushCoverage();
+          // 任务终点 = 收尾条目（done 标之前那一叶）；起点 = 本任务链上最早的用户消息条目（fish 09-15）
+          const endEntry = smP.getLeafId() ?? undefined;
+          const startEntry = findTaskStart(smP, preLeaf, endEntry);
           if (marks?.done) handle.mark(marks.done);                 // 完成后打 done
+          lineage(ctx.workdir, {
+            id, action: "task-end", task: taskId, file: sessFile, agent: opts.agent, target,
+            label: marks?.label, startEntry, endEntry, status: "done",
+            attempts: failures + 1, startedAt: new Date(startedAt).toISOString(),
+            durationMs: Date.now() - startedAt, ops: ops.snapshot(),
+          });
           return { aborted: false };
         } catch (e) {
           failures++;
           if (failures >= 3) {
             lineage(ctx.workdir, { id, action: "abort", reason: String(e) });
+            const endEntry = smP.getLeafId() ?? undefined;
+            lineage(ctx.workdir, {
+              id, action: "task-end", task: taskId, file: sessFile, agent: opts.agent, target,
+              label: marks?.label, startEntry: findTaskStart(smP, preLeaf, endEntry), endEntry, status: "aborted",
+              attempts: failures, startedAt: new Date(startedAt).toISOString(),
+              durationMs: Date.now() - startedAt, ops: ops.snapshot(),
+            });
             return { aborted: true };
           }
           pending = "上一次执行因平台错误中断。请核对工作区现状，从未完成处继续。";
@@ -221,10 +277,15 @@ export async function startSession(ctx: SessionCtx, opts: {
     },
 
     async summarizeTo(label: string, opts2: { summaryLabel: string; guide?: string }) {
-      // 自研分支摘要（fish 09-11）：不经过 pi 摘要器（其 4096 硬编码/thinking 丢失缺陷与我们再无关系）
+      // 自研分支摘要（fish 09-11）；task summary 语义（fish 09-15）：闭区间含两端、挂到起处的前驱
       const { branchSummarize } = await import("./branch-summary.ts");
-      await branchSummarize(sess as unknown as Parameters<typeof branchSummarize>[0], ctx.engineDir, label, opts2);
-      lineage(ctx.workdir, { id, action: "branch-summary", label, summaryLabel: opts2.summaryLabel });
+      const r = await branchSummarize(sess as unknown as Parameters<typeof branchSummarize>[0], ctx.engineDir, label, opts2);
+      // 折叠台账（task summary = 唯一折叠操作）：覆盖区间 + 成员任务；coveredBy 派生
+      lineage(ctx.workdir, {
+        id, action: "fold", file: sessFile, kind: "task-summary", label, summaryEntry: r.summaryId, summaryLabel: opts2.summaryLabel,
+        attach: r.attachId, from: r.fromId, covered: r.coveredIds.length,
+        members: tasksCovering(ctx.workdir, sessFile, new Set(r.coveredIds)),
+      });
     },
 
     mark(label: string) {
