@@ -133,6 +133,20 @@ function dirPrefixes(fileRel: string): string[] {
   return dirs;
 }
 
+/** 判断 rel 是否落在 outputDir 子树内（rel 为 targetRoot 相对路径，"/" 分隔）。 */
+function isInsideRelPrefix(rel: string, prefix: string): boolean {
+  return rel === prefix || rel.startsWith(prefix + "/");
+}
+
+/** outputDir 相对 targetRoot 的排除前缀（如 ".vulnforge"）。
+ *  coverage 只面向目标项目代码，工作区产物目录（outputDir 子树）一律排除。
+ *  outputDir 不在 targetRoot 内时返回 null（此时无相对前缀可排除）。 */
+function outputDirPrefix(targetRoot: string, outputDir: string): string | null {
+  const rel = path.relative(path.resolve(targetRoot), path.resolve(outputDir)).replaceAll(path.sep, "/");
+  if (!rel || rel.startsWith("..") || path.isAbsolute(rel)) return null;
+  return rel;
+}
+
 function round(n: number): number {
   return Math.round(n * 10000) / 10000;
 }
@@ -162,6 +176,14 @@ function recompute(map: CoverageMap) {
 
 function ensureInitialMap(targetRoot: string, outputDir: string, existing?: CoverageMap): CoverageMap {
   const files: Record<string, FileCoverage> = existing?.files ?? {};
+  // 存量自愈：旧版本可能已把 outputDir 子树内的噪声文件写进 map.files
+  // （total_lines=0 的 .vulnforge 条目），加载时剔除，无需用户手工清理。
+  const excludePrefix = outputDirPrefix(targetRoot, outputDir);
+  if (excludePrefix) {
+    for (const rel of Object.keys(files)) {
+      if (isInsideRelPrefix(rel, excludePrefix)) delete files[rel];
+    }
+  }
   for (const full of walkFiles(targetRoot)) {
     const rel = path.relative(targetRoot, full).replaceAll(path.sep, "/");
     if (!files[rel]) {
@@ -215,6 +237,10 @@ function appendEvent(jsonlPath: string, event: CoverageEvent) {
 function aggregateEvents(jsonlPath: string, map: CoverageMap): boolean {
   if (!existsSync(jsonlPath)) return false;
 
+  // 防御纵深：历史 jsonl 中可能已混入 outputDir 子树的噪声事件
+  // （如 hunt 读取 .vulnforge/todo/*.md 的记录），聚合时跳过，避免再次注入 map。
+  const excludePrefix = outputDirPrefix(map.target_root, map.output_dir);
+
   let fd: number;
   try { fd = openSync(jsonlPath, "r"); } catch { return false; }
 
@@ -250,6 +276,7 @@ function aggregateEvents(jsonlPath: string, map: CoverageMap): boolean {
       if (fileList.length === 0) continue;
 
       for (const file of fileList) {
+        if (excludePrefix && isInsideRelPrefix(file, excludePrefix)) continue;
         const rec: FileCoverage = map.files[file] ?? {
           path: file, total_lines: 0, read_lines: 0, coverage: 0,
           ranges: [], read_count: 0, stages: [],
@@ -285,14 +312,18 @@ function persistJson(map: CoverageMap, jsonPath: string) {
 
 /**
  * Resolve an absolute file path to a relative path under targetRoot.
- * Returns null if the path is outside targetRoot or not a trackable code file.
+ * Returns null if the path is outside targetRoot, inside outputDir
+ * (workspace artifacts are not target project code), or not a trackable
+ * code file.
  */
-function resolveToRel(absPath: string, targetRoot: string): string | null {
+export function resolveToRel(absPath: string, targetRoot: string, outputDir: string): string | null {
   const resolved = path.resolve(absPath);
-  if (!resolved.startsWith(targetRoot + path.sep) && resolved !== targetRoot) return null;
+  if (!resolved.startsWith(path.resolve(targetRoot) + path.sep) && resolved !== path.resolve(targetRoot)) return null;
+  const outDir = path.resolve(outputDir);
+  if (resolved === outDir || resolved.startsWith(outDir + path.sep)) return null;
   if (!existsSync(resolved) || !statSync(resolved).isFile()) return null;
   if (!isProbablyCodeFile(resolved)) return null;
-  return path.relative(targetRoot, resolved).replaceAll(path.sep, "/");
+  return path.relative(path.resolve(targetRoot), resolved).replaceAll(path.sep, "/");
 }
 
 // ============================================================================
@@ -494,13 +525,14 @@ export function renderCoverage(map: CoverageMap, params: { path?: string; depth?
 export function recordReadCoverageEvent(args: {
   jsonlPath: string;
   targetRoot: string;
+  outputDir: string;
   stage: string;
   input?: { path?: string; offset?: number; limit?: number };
 }) {
   const input = args.input;
   if (!input?.path) return;
 
-  const rel = resolveToRel(input.path, args.targetRoot);
+  const rel = resolveToRel(input.path, args.targetRoot, args.outputDir);
   if (!rel) return;
 
   const total = countLines(path.resolve(input.path));
