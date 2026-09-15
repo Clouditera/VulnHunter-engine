@@ -20,6 +20,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { monitorState, loadRuns } from "./monitor-state.ts";
+import { buildSessionState } from "./session-state.ts";
 
 let started = false;
 
@@ -69,6 +70,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   if (u.pathname === "/api/state") return sendJson(res, buildState());
   if (u.pathname === "/api/run") return sendJson(res, buildRun(u.searchParams.get("workdir") ?? "", u.searchParams.get("runId") ?? ""));
   if (u.pathname === "/api/stage") return sendJson(res, buildStageDetail(u.searchParams.get("workdir") ?? "", u.searchParams.get("runId") ?? "", u.searchParams.get("stage") ?? ""));
+  if (u.pathname === "/api/session-state") return sendJson(res, apiSessionState(u.searchParams.get("file") ?? "", u.searchParams.get("workdir") ?? ""));
   if (u.pathname === "/session") return sendHtml(res, renderSession(u.searchParams.get("file") ?? ""));
   return sendHtml(res, SPA);
 }
@@ -126,6 +128,12 @@ function buildRun(workdir: string, runId: string) {
 
 function readdirSyncSafe(d: string): string[] {
   try { return readdirSync(d); } catch { return []; }
+}
+
+/** /api/session-state：任务定位 + 摘要映射 + 活态（session-state 模块） */
+function apiSessionState(file: string, workdir: string) {
+  if (!file || !file.endsWith(".jsonl") || !existsSync(file)) return { error: "缺 file（会话 jsonl 路径）" };
+  try { return buildSessionState({ file, workdir }); } catch (e) { return { error: String(e) }; }
 }
 
 // ---------------------------------------------------------------------------

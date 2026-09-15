@@ -76,7 +76,7 @@ export class OpsCounter {
 
 interface LedgerRow { action?: string; id?: string; file?: string; [k: string]: unknown }
 
-function readRows(workdir: string): LedgerRow[] {
+export function loadLedgerRows(workdir: string): LedgerRow[] {
   try {
     return readFileSync(join(workdir, "sessions-lineage.jsonl"), "utf-8")
       .split("\n").filter(Boolean)
@@ -87,7 +87,7 @@ function readRows(workdir: string): LedgerRow[] {
 
 /** task-end 记录（用于折叠成员计算；可按会话文件过滤） */
 export function loadTaskEnds(workdir: string, file?: string): Array<Record<string, unknown>> {
-  return readRows(workdir).filter((r) => r.action === "task-end" && (!file || r.file === file || r.id === file));
+  return loadLedgerRows(workdir).filter((r) => r.action === "task-end" && (!file || r.file === file || r.id === file));
 }
 
 /** 折叠覆盖集 → 成员任务 id 清单（start 与 end 均落在覆盖集内才算被覆盖） */

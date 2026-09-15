@@ -19,6 +19,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { NODES, type NodeSpec } from "./nodes.ts";
 import { lineage, OpsCounter, tasksCovering } from "./ledger.ts";
+import { buildSessionState, type SessionState } from "./session-state.ts";
 import { type FnBinding, type WsContext } from "./workspace-tools.ts";
 import { makeArtifactTool } from "./artifact.ts";
 import { monitorState } from "./monitor-state.ts";
@@ -58,6 +59,8 @@ export interface SessionHandle {
   setBinding(patch: Partial<FnBinding>): void;
   /** 当前会话文件路径 */
   sessionFile(): string | undefined;
+  /** 会话状态视图（任务定位/摘要映射/活态，fish 09-15） */
+  state(): SessionState;
   /** 释放资源 */
   close(): void;
 }
@@ -283,7 +286,7 @@ export async function startSession(ctx: SessionCtx, opts: {
       // 折叠台账（task summary = 唯一折叠操作）：覆盖区间 + 成员任务；coveredBy 派生
       lineage(ctx.workdir, {
         id, action: "fold", file: sessFile, kind: "task-summary", label, summaryEntry: r.summaryId, summaryLabel: opts2.summaryLabel,
-        attach: r.attachId, from: r.fromId, covered: r.coveredIds.length,
+        attach: r.attachId, from: r.fromId, covered: r.coveredIds.length, coveredIds: r.coveredIds,
         members: tasksCovering(ctx.workdir, sessFile, new Set(r.coveredIds)),
       });
     },
@@ -340,6 +343,20 @@ export async function startSession(ctx: SessionCtx, opts: {
 
     sessionFile() {
       try { return (sess as any).sessionManager?.getSessionFile?.(); } catch { return undefined; }
+    },
+
+    state() {
+      try {
+        const sm3 = (sess as any).sessionManager as SessionManager;
+        return buildSessionState({
+          file: sessFile ?? "",
+          workdir: ctx.workdir,
+          entries: sm3.getEntries() as unknown as Parameters<typeof buildSessionState>[0]["entries"],
+          leafId: sm3.getLeafId(),
+        });
+      } catch {
+        return buildSessionState({ file: sessFile ?? "", workdir: ctx.workdir });
+      }
     },
 
     close() {
