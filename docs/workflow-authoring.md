@@ -1,6 +1,6 @@
 # 编写新 workflow（供外层 agent 现场编排）
 
-workflow = 一个导出 `defineWorkflow({ name, description, run })` 的 TS 文件，放在 `workflows/` 下即可被 scan 启动（`scan({workflow: "<文件名去 .ts>", params})`）。
+workflow = 一个导出 `defineWorkflow({ name, description, run })`（或 `defineStagedWorkflow({ name, description, stages })`，注册表会自动适配）的 TS 文件，放在 `workflows/` 下，并在 `src/workflows/index.ts` 注册表里加一行 `staged(xxx)`（或 `xxx`）——加载经静态 import 走 pi 宿主的 jiti，与扩展本体同一机制；漏注册 = 该 workflow 不可用（HALL-47 后目录不再热扫描）。之后即可 `scan({workflow: "<name>", params})` 启动。
 
 ## 规则
 
