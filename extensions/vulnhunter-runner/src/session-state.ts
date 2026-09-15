@@ -26,18 +26,20 @@ export interface TaskView {
   startedAt?: string;
   durationMs?: number;
   ops?: unknown;
-  coveredBy: string[];       // 直接覆盖本任务的 fold（summaryEntry 列表）
+  coveredBy: string[];         // 直接覆盖本任务的 fold（本会话内；summaryEntry 列表）
+  coveredByExternal: string[]; // 其它会话文件中覆盖本任务的 fold（经 refs.folds 解析来源）
 }
 
 export interface FoldView {
   id: string;                // summaryEntry 条目 id
   label: string;             // summaryLabel（Σ…）
+  file?: string;             // 所属会话文件（本视图内即 opts.file）
   attach?: string;
   from?: string;
   covered: number;
   coveredIds: string[];      // 覆盖集（含嵌套摘要条目）
   members: string[];         // 覆盖集内 start/end 双双被覆盖的 task
-  childFolds: string[];      // 本 fold 覆盖的嵌套摘要（间接覆盖的入口）
+  childFolds: string[];      // 本 fold 覆盖的嵌套摘要（含跨文件——链启动摘要引用父文件的 Σ 链）
   ts: string;
 }
 
@@ -47,6 +49,11 @@ export interface SessionState {
   entryCount: number;
   tasks: TaskView[];
   folds: FoldView[];
+  /** 跨文件来源索引：本视图引用到的 fold/task id → {label, file}（条目 id 全局唯一） */
+  refs: {
+    folds: Record<string, { label: string; file?: string; session?: string }>;
+    tasks: Record<string, { label?: string; file?: string }>;
+  };
   active: {
     leafId: string | null;
     task?: string;           // 在途任务（task-start 无 task-end）
@@ -77,10 +84,26 @@ export function buildSessionState(opts: {
   const leafId = opts.leafId !== undefined ? opts.leafId : (entries.length ? entries[entries.length - 1].id : null);
 
   // 台账行：优先按会话文件键控；无 file 的记录按会话 id 兜底
-  const rows = loadLedgerRows(opts.workdir).filter((r) => {
+  const allRows = loadLedgerRows(opts.workdir);
+  const rows = allRows.filter((r) => {
     if (r.file) return r.file === opts.file;
     return !!opts.sessionId && r.id === opts.sessionId;
   });
+
+  // 全局来源索引（跨文件引用解析：链会话启动摘要引用父文件的 task/摘要）
+  const foldIndex = new Map<string, { label: string; file?: string; session?: string; members: string[] }>();
+  for (const r of allRows) {
+    if (r.action === "fold" && r.summaryEntry) {
+      foldIndex.set(String(r.summaryEntry), {
+        label: String(r.summaryLabel ?? ""), file: r.file as string | undefined, session: r.id as string | undefined,
+        members: Array.isArray(r.members) ? (r.members as unknown[]).map(String) : [],
+      });
+    }
+  }
+  const taskIndex = new Map<string, { label?: string; file?: string }>();
+  for (const r of allRows) {
+    if (r.action === "task-end" && r.task) taskIndex.set(String(r.task), { label: r.label as string | undefined, file: r.file as string | undefined });
+  }
 
   // ① 任务：task-start / task-end 按 task id 合并（行序=时序）
   const tasksMap = new Map<string, TaskView>();
@@ -88,7 +111,7 @@ export function buildSessionState(opts: {
     if (r.action !== "task-start" && r.action !== "task-end") continue;
     const task = String(r.task ?? "");
     if (!task) continue;
-    const t: TaskView = tasksMap.get(task) ?? { task, status: "running", coveredBy: [] };
+    const t: TaskView = tasksMap.get(task) ?? { task, status: "running", coveredBy: [], coveredByExternal: [] };
     t.label = (r.label as string) ?? t.label;
     t.agent = (r.agent as string) ?? t.agent;
     t.target = (r.target as string) ?? t.target;
@@ -107,10 +130,11 @@ export function buildSessionState(opts: {
     tasksMap.set(task, t);
   }
 
-  // ② 折叠：覆盖集/嵌套关系/成员；coveredBy 由 members 反推
+  // ② 折叠：覆盖集/嵌套关系/成员；coveredBy 由 members 反推（本会话/跨文件分开）
   const folds: FoldView[] = rows.filter((r) => r.action === "fold").map((r) => ({
     id: String(r.summaryEntry ?? ""),
     label: String(r.summaryLabel ?? ""),
+    file: opts.file,
     attach: r.attach as string | undefined,
     from: r.from as string | undefined,
     covered: Number(r.covered ?? 0),
@@ -119,14 +143,36 @@ export function buildSessionState(opts: {
     childFolds: [],
     ts: String(r.ts ?? ""),
   })).filter((f) => !!f.id);
-  const bySummary = new Map(folds.map((f) => [f.id, f]));
+  // childFolds 对全局索引匹配：链启动摘要覆盖的 Σ 链属父文件，也要列出来源
   for (const f of folds) {
     for (const id of f.coveredIds) {
-      if (id !== f.id && bySummary.has(id)) f.childFolds.push(id);
+      if (id !== f.id && foldIndex.has(id)) f.childFolds.push(id);
     }
   }
   const tasks = [...tasksMap.values()];
-  for (const t of tasks) t.coveredBy = folds.filter((f) => f.members.includes(t.task)).map((f) => f.id);
+  for (const t of tasks) {
+    t.coveredBy = folds.filter((f) => f.members.includes(t.task)).map((f) => f.id);
+    t.coveredByExternal = [...foldIndex.entries()]
+      .filter(([, m]) => m.file !== opts.file && m.members.includes(t.task))
+      .map(([fid]) => fid);
+  }
+
+  // 跨文件来源索引：本视图引用到的全部 fold/task id 解析到 {label, file}
+  const refsFolds: Record<string, { label: string; file?: string; session?: string }> = {};
+  const refFoldIds = new Set<string>(folds.map((f) => f.id));
+  for (const f of folds) for (const id of f.childFolds) refFoldIds.add(id);
+  for (const t of tasks) for (const id of [...t.coveredBy, ...t.coveredByExternal]) refFoldIds.add(id);
+  for (const id of refFoldIds) {
+    const m = foldIndex.get(id);
+    if (m) refsFolds[id] = { label: m.label, file: m.file, session: m.session };
+  }
+  const refsTasks: Record<string, { label?: string; file?: string }> = {};
+  const refTaskIds = new Set<string>(tasks.map((t) => t.task));
+  for (const f of folds) for (const id of f.members) refTaskIds.add(id);
+  for (const id of refTaskIds) {
+    const m = taskIndex.get(id);
+    if (m) refsTasks[id] = { label: m.label, file: m.file };
+  }
 
   // ③ 活态：叶位置 / 在途任务 / 距上次摘要的新增节点数（从叶上溯，遇覆盖集或摘要条目即停）
   const coveredAll = new Set<string>();
@@ -154,5 +200,5 @@ export function buildSessionState(opts: {
     nodesSinceFold,
   };
 
-  return { file: opts.file, leafId, entryCount: entries.length, tasks, folds, active };
+  return { file: opts.file, leafId, entryCount: entries.length, tasks, folds, refs: { folds: refsFolds, tasks: refsTasks }, active };
 }
