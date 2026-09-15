@@ -7,6 +7,7 @@
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { lineage } from "./ledger.ts";
 
 export type QueueKind = "ADV" | "HYP" | "LEAD";
 
@@ -26,7 +27,12 @@ export function pending(workdir: string, kind: QueueKind): string[] {
 function move(workdir: string, file: string, from: "leads" | "todo", to: "todo" | "done" | "leads"): void {
   const src = join(dir(workdir, from), file);
   const dst = join(dir(workdir, to), file);
-  if (existsSync(src)) { renameSync(src, dst); return; }
+  if (existsSync(src)) {
+    renameSync(src, dst);
+    // 材料流事件（fish 09-15 观察台需求；designer 09-15 口径：派发/移入在途与「会话开始」是两个事件，不得互相顶替）
+    lineage(workdir, { action: "queue", item: file.replace(/\.md$/, ""), from, to });
+    return;
+  }
   if (existsSync(dst)) return; // 已被（agent 或上轮）移动过，视为已达终态
   console.warn(`[queue] 移动忽略：${file} 既不在 ${from}/ 也不在 ${to}/`);
 }
@@ -62,6 +68,7 @@ export function pendingLeads(workdir: string): LeadRoute[] {
 
 export function markLeadDone(workdir: string, file: string): void {
   renameSync(join(dir(workdir, "leads"), file), join(dir(workdir, "done"), file));
+  lineage(workdir, { action: "queue", item: file.replace(/\.md$/, ""), from: "leads", to: "done" });
 }
 
 /** LEAD(hunt) → ADV：机械转化，新 C 线号（内外部 ADV 不区分） */
