@@ -141,6 +141,29 @@ export async function startSession(ctx: SessionCtx, opts: {
   monitorState.nodeStart(id, { id, agent: opts.agent, target: opts.binding?.advId ?? opts.binding?.hypId, startTs: Date.now(), workdir: ctx.workdir, cwd: ctx.cwd });
   let sessFile: string | undefined;
   try { sessFile = (sess as any).sessionManager?.getSessionFile?.(); if (sessFile) monitorState.nodeSession(id, sessFile); } catch { /* 无碍 */ }
+
+  // 模型回退守卫（09-15 sec 实报：KIMI_API_KEY 传空 → pi 静默换默认模型继续跑，盲测险情）。
+  // 引擎的模型唯一来源是 settings.json 默认项，实际生效必须一致；不一致默认硬失败。
+  let expectedModel: string | null = null;
+  try {
+    const sj = JSON.parse(readFileSync(join(ctx.engineDir, "settings.json"), "utf-8")) as { defaultProvider?: string; defaultModel?: string };
+    if (sj.defaultProvider && sj.defaultModel) expectedModel = `${sj.defaultProvider}/${sj.defaultModel}`;
+  } catch { /* 无 settings.json 或读不出 → 不设期望，跳过守卫 */ }
+  if (expectedModel) {
+    const em = (sess as unknown as { model?: { provider?: string; id?: string } }).model;
+    const got = em?.provider && em?.id ? `${em.provider}/${em.id}` : "（无）";
+    if (got !== expectedModel) {
+      const msg = `模型回退检测：settings.json 配置 ${expectedModel}，实际生效 ${got}——疑似 provider 认证缺失被 pi 静默替换。`;
+      if (process.env.VULNHUNTER_ALLOW_MODEL_FALLBACK === "1") {
+        monitorState.log(`警告：${msg}（已放行）`);
+        console.error(`[vulnhunter] ${msg}`);
+      } else {
+        monitorState.nodeEnd(id);
+        try { (sess as any).dispose?.(); } catch { /* 无碍 */ }
+        throw new Error(`${msg} run 已中止；确认 API key 后重试，或设 VULNHUNTER_ALLOW_MODEL_FALLBACK=1 放行。`);
+      }
+    }
+  }
   const cov = getCoveragePaths(ctx.workdir);
   const covCfg = loadCoverageConfig(ctx.workdir);
   let covOn = opts.agent === "hunt";
