@@ -18,7 +18,7 @@ import {
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { NODES, type NodeSpec } from "./nodes.ts";
-import { lineage, OpsCounter, tasksCovering } from "./ledger.ts";
+import { lineage, OpsCounter, tasksCovering, loadLedgerRows } from "./ledger.ts";
 import { buildSessionState, type SessionState } from "./session-state.ts";
 import { type FnBinding, type WsContext } from "./workspace-tools.ts";
 import { makeArtifactTool } from "./artifact.ts";
@@ -210,7 +210,9 @@ export async function startSession(ctx: SessionCtx, opts: {
   });
 
   let closed = false;
+  // 任务序号按会话文件接续：同一会话文件跨句柄复活（stage 边界）时序号不重叠（09-15 回归实踩 init#t1×3）
   let taskSeq = 0;
+  try { taskSeq = loadLedgerRows(ctx.workdir).filter((r) => r.action === "task-start" && (sessFile ? r.file === sessFile : r.id === id)).length; } catch { /* 无碍 */ }
   const flushCoverage = () => {
     if (!cov) return;
     const map = loadCoverageMap(cov.jsonPath, ctx.cwd, ctx.workdir);
@@ -287,7 +289,7 @@ export async function startSession(ctx: SessionCtx, opts: {
       lineage(ctx.workdir, {
         id, action: "fold", file: sessFile, kind: "task-summary", label, summaryEntry: r.summaryId, summaryLabel: opts2.summaryLabel,
         attach: r.attachId, from: r.fromId, covered: r.coveredIds.length, coveredIds: r.coveredIds,
-        members: tasksCovering(ctx.workdir, sessFile, new Set(r.coveredIds)),
+        members: tasksCovering(ctx.workdir, new Set(r.coveredIds)),
       });
     },
 

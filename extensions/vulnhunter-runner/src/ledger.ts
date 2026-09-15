@@ -90,13 +90,13 @@ export function loadTaskEnds(workdir: string, file?: string): Array<Record<strin
   return loadLedgerRows(workdir).filter((r) => r.action === "task-end" && (!file || r.file === file || r.id === file));
 }
 
-/** 折叠覆盖集 → 成员任务 id 清单（start 与 end 均落在覆盖集内才算被覆盖） */
-export function tasksCovering(workdir: string, file: string | undefined, coveredIds: Set<string>): string[] {
+/** 折叠覆盖集 → 成员任务 id 清单（start 与 end 均落在覆盖集内才算被覆盖；条目 id 全局唯一，跨会话继承同样匹配） */
+export function tasksCovering(workdir: string, coveredIds: Set<string>): string[] {
   const out: string[] = [];
-  for (const t of loadTaskEnds(workdir, file)) {
+  for (const t of loadTaskEnds(workdir)) {
     const s = t.startEntry as string | undefined;
     const e = t.endEntry as string | undefined;
     if (s && e && coveredIds.has(s) && coveredIds.has(e)) out.push(String(t.task ?? ""));
   }
-  return out.filter(Boolean);
+  return [...new Set(out)].filter(Boolean);
 }
