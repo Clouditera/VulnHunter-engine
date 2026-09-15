@@ -26,7 +26,9 @@ export interface FileQueueOptions {
 
 export class FileQueue implements QueueBackend<string> {
   private attempts = new Map<string, number>();
-  constructor(private opts: FileQueueOptions) {
+  private opts: FileQueueOptions;
+  constructor(opts: FileQueueOptions) {
+    this.opts = opts;
     for (const d of [opts.pending, opts.inflight, opts.archive]) mkdirSync(d, { recursive: true });
   }
 

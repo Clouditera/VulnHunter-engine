@@ -66,18 +66,24 @@ function renderFindings(workdir: string): string {
 export default function (pi: ExtensionAPI) {
   const state: RunState = { status: "idle", log: [] };
   const workflows = new Map<string, Workflow>();
+  const loadErrors: string[] = [];
 
   // web 观察台（fish 09-14）：VULNHUNTER_WEB=1 即起，端口/绑定走 VULNHUNTER_WEB_PORT/HOST
   ensureWebService();
 
   async function loadWorkflows() {
     workflows.clear();
+    loadErrors.length = 0;
     for (const f of readdirSync(WORKFLOWS_DIR).filter((f) => f.endsWith(".ts") && !f.endsWith(".d.ts"))) {
       try {
         const mod = await import(pathToFileURL(join(WORKFLOWS_DIR, f)).href);
-        const w: Workflow = mod.default ?? (typeof mod.run === "function" ? { name: f.replace(/\.ts$/, ""), run: mod.run } : undefined);
+        const def = mod.default;
+        // 两种导出结构：①旧：default 自带 run；②staged：default=StagedWorkflow 定义（无 run）+ 命名导出 run（runStages 包装）
+        let w: Workflow | undefined;
+        if (def && typeof def.run === "function") w = def;
+        else if (typeof mod.run === "function") w = { name: def?.name ?? f.replace(/\.ts$/, ""), description: def?.description, run: mod.run };
         if (w?.name && typeof w.run === "function") workflows.set(w.name, w);
-      } catch { /* 单个 workflow 加载失败不拖垮整体 */ }
+      } catch (e) { loadErrors.push(`${f}: ${String(e).split("\n")[0].slice(0, 160)}`); }
     }
   }
 
@@ -113,7 +119,7 @@ export default function (pi: ExtensionAPI) {
         const name = args.workflow ?? state.workflow;
         if (!name) bad(`resume 缺 workflow 名，且本会话没有跑过任何 workflow。可用：${[...workflows.keys()].join(", ")}`);
         const w = workflows.get(name);
-        if (!w) bad(`未知 workflow：${name}。可用：${[...workflows.keys()].join(", ")}`);
+        if (!w) bad(`未知 workflow：${name}。可用：${[...workflows.keys()].join(", ")}${workflows.size === 0 && loadErrors.length ? `\n加载失败详情：\n${loadErrors.join("\n")}` : ""}`);
 
         // resume：自动定位上次 failed 的阶段
         let runOpts: { runId?: string; from?: string } = {};

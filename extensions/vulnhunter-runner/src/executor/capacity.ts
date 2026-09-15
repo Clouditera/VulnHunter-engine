@@ -42,11 +42,13 @@ export class CapacityPool {
   private permits: number;
   private held = new Map<Permit, { tag: string; since: number }>();
   private waiters: Waiter[] = [];
+  private emit: (e: ExecEvent) => void;
 
-  constructor(name: string, opts: CapacityOptions, private emit: (e: ExecEvent) => void) {
+  constructor(name: string, opts: CapacityOptions, emit: (e: ExecEvent) => void) {
     this.name = name;
     this.permits = Math.max(0, Math.floor(opts.permits));
     this.agingMs = opts.agingMs ?? DEFAULT_AGING_MS;
+    this.emit = emit;
   }
 
   get total(): number { return this.permits; }
