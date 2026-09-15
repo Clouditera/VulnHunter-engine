@@ -211,7 +211,7 @@ export async function runHypChain(ctx: LibCtx, init: SessionHandle, hypFile: str
       const stageCode = dynamicMode ? "dv" : "sv";
       const book = dynamicMode ? "dynamic-verify" : "static-verify";
       const r = await chain.prompt(buildPrompt(ctx, book, `${book} 任务，研判风险假设的成立性。`, `风险假设：${ctx.workdir}/todo/${hypFile}`),
-        { start: `${stageCode}(${hypShort})-start[${ing}]` });
+        { start: `${stageCode}(${hypShort})-start[${ing}]`, label: `${stageCode}(${hypShort})` });
       if (r.aborted) { ctx.report(`${hypId}：API 不可用，链中止`); backToLeads(ctx.workdir, hypFile); return; }
       if (!existsSync(bugDir)) {
         chain.mark(`${stageCode}(${hypShort})-done[${ing},${stageCode}(${hypShort})][+refuted]`);
@@ -228,7 +228,7 @@ export async function runHypChain(ctx: LibCtx, init: SessionHandle, hypFile: str
           const txt = existsSync(rp) ? readFileSync(rp, "utf-8") : "";
           if (/poc_status:\s*reproduced/.test(txt) && /exp_status:\s*pending/.test(txt)) {
             const r3 = await chain.prompt(buildPrompt(ctx, "ev-assess", "ev-assess 任务，评估 finding 在真实业务场景下的影响。", `目标 finding：${target}`),
-              { start: `ev(${hypShort})-start[${ing},${stageCode}(${hypShort}),finding]` });
+              { start: `ev(${hypShort})-start[${ing},${stageCode}(${hypShort}),finding]`, label: `ev(${hypShort})` });
             if (!r3.aborted) chain.mark(`ev(${hypShort})-done[Σ,${stageCode}(${hypShort}),ev(${hypShort})][+EV 已评]`);
             else ctx.report(`${hypId}：ev-assess API 中止`);
           }

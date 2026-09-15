@@ -66,7 +66,7 @@ const liteWorkflow = defineStagedWorkflow({
       const s0 = await s.openSession("init", "init-host", { binding: { advId: "ADV-C0-A1", runNo: 1, advLine: "S" }, fresh: true });
       try {
         const r = await s0.prompt(buildPrompt(ctx, "onboard", "onboard 任务，初始化整个审计任务。"),
-          { start: "onboard-start[∅]", done: "onboard-done[on][+profiler]" });
+          { start: "onboard-start[∅]", done: "onboard-done[on][+profiler]", label: "onboard" });
         if (r.aborted) throw new Error("API 不可用");
       } finally { s0.close(); }   // 关句柄不关文件；后续阶段按文件复活
     } });
@@ -74,7 +74,7 @@ const liteWorkflow = defineStagedWorkflow({
       const s0 = await s.openSession("init", "init-host", { binding: { advId: "ADV-C0-A1", runNo: 1, advLine: "S" } });
       try {
         const r = await s0.prompt(buildPrompt(ctx, "build", "build 任务，理解项目的构建与部署方式并落 build-state。"),
-          { start: "build-start[on]", done: "build-done[on,bu][+build-state]" });
+          { start: "build-start[on]", done: "build-done[on,bu][+build-state]", label: "build" });
         if (r.aborted) throw new Error("API 不可用");
       } finally { s0.close(); }
     } });
@@ -83,7 +83,7 @@ const liteWorkflow = defineStagedWorkflow({
       try {
         const before = advCount(ctx);
         const r = await s0.prompt(buildPrompt(ctx, "research", "research 任务，检索公开信息与 git 信息、补齐漏洞认可口径。"),
-          { start: "research-start[on,bu]" });
+          { start: "research-start[on,bu]", label: "research" });
         if (r.aborted) throw new Error("API 不可用");
         s0.mark(`research-done[on,bu,re][+ADV×${advCount(ctx) - before},wiki]`);
       } finally { s0.close(); }
@@ -126,7 +126,7 @@ const liteWorkflow = defineStagedWorkflow({
           // fresh 重开轮不打 start 标：goto 后叶子正是 init 锚点条目，pi 单条目单标签，
           // 此时打标会覆盖锚点标签，下一轮 goto("init") 必死（09-11 mem-b hunt3 实踩）
           const r = await s0.prompt(buildPrompt(ctx, "hunt", `hunt 任务（第 ${r0} 轮）。用 coverage({scope:"global"}) 查看靶内已读覆盖，选定一个尚未精读、边界明确的单一功能点（代码量千行及以下）系统性精读，沿真实数据流挖掘风险假设（HYP），每条落到具体 file:line；与已有 HYP 重复不提。确认没有新东西就明说。`),
-            freshRestart ? undefined : { start: `${rn}-start[init${sigmaPrev.length ? "," + sigmaPrev.join(",") : ""}]` });
+            { ...(freshRestart ? {} : { start: `${rn}-start[init${sigmaPrev.length ? "," + sigmaPrev.join(",") : ""}]` }), label: rn });
           if (r.aborted) throw new Error("API 不可用");
           const news = hypFiles(ctx).filter((f) => !before.has(f));
           ((d.roundHyps ??= {}) as Record<string, string[]>)[rn] = news;
