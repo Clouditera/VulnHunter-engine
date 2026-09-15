@@ -12,6 +12,29 @@ const CODE_EXTENSIONS = new Set([
   ".zsh", ".fish", ".ps1", ".sql", ".html", ".css", ".scss", ".sass",
   ".vue", ".svelte", ".yaml", ".yml", ".json", ".toml", ".ini", ".cfg",
   ".conf", ".md", ".rst", ".txt", ".xml", ".proto", ".graphql", ".gql",
+  // C/C++/CUDA（HALL-46）：头文件与模板实现文件（.tcc/.inl/.ipp）在
+  // boost/STL 类项目中承载真实逻辑，均计入覆盖分母。
+  ".cu", ".cuh", ".cc", ".cxx", ".c++", ".hh", ".hxx", ".h++",
+  ".tcc", ".inl", ".ipp", ".inc",
+  // 汇编（.S 大写由 extname 的 toLowerCase 自动覆盖）
+  ".s", ".asm",
+  // ObjC
+  ".m", ".mm",
+  // 构建/系统脚本：链接脚本、设备树、Windows 资源文件
+  ".cmake", ".mk", ".lds", ".dts", ".dtsi", ".rc",
+  // 其它语言与 Windows 脚本
+  ".mts", ".cts", ".lua", ".pl", ".pm", ".dart", ".zig", ".nim",
+  ".sol", ".bat", ".cmd",
+]);
+
+// 无后缀关键文件：path.extname("Makefile") 返回空串，后缀白名单永远
+// 匹配不上，而这些恰是 C/C++ 审计目标的构建核心，故按精确文件名兑底。
+// 大小写敏感，按通用写法全量列出（Makefile/makefile 并存）。
+const CODE_BASENAMES = new Set([
+  "Makefile", "makefile", "GNUmakefile",
+  "CMakeLists.txt", "Dockerfile",
+  "BUILD", "BUILD.bazel", "WORKSPACE", "WORKSPACE.bazel",
+  "Kbuild", "Kconfig", "meson.build",
 ]);
 
 const EXCLUDED_DIRS = new Set([
@@ -69,7 +92,8 @@ interface CoverageEvent {
 // ============================================================================
 
 function isProbablyCodeFile(file: string): boolean {
-  return CODE_EXTENSIONS.has(path.extname(file).toLowerCase());
+  return CODE_EXTENSIONS.has(path.extname(file).toLowerCase())
+    || CODE_BASENAMES.has(path.basename(file));
 }
 
 function countLines(file: string): number {

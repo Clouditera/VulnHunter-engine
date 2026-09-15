@@ -34,6 +34,40 @@ function makeFixture() {
   return { root, targetRoot, outputDir };
 }
 
+test("walkFiles 纳入性：新增后缀与无后缀构建文件计入分母（HALL-46）", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "cov-ext-test-"));
+  try {
+    const targetRoot = path.join(root, "proj");
+    const outputDir = path.join(targetRoot, ".vulnforge");
+    mkdirSync(path.join(targetRoot, "src"), { recursive: true });
+    mkdirSync(path.join(outputDir, "knowledge", "coverage"), { recursive: true });
+    // HALL-46 新增后缀（.S 大写验证 toLowerCase 覆盖）
+    writeFileSync(path.join(targetRoot, "src", "trampoline.cu"), "int main() { return 0; }\n");
+    writeFileSync(path.join(targetRoot, "src", "impl.cc"), "int f() { return 1; }\n");
+    writeFileSync(path.join(targetRoot, "src", "header.hh"), "int g();\n");
+    writeFileSync(path.join(targetRoot, "src", "boot.S"), "nop\n");
+    writeFileSync(path.join(targetRoot, "src", "isr.asm"), "ret\n");
+    // 无后缀关键文件（basename 白名单）
+    writeFileSync(path.join(targetRoot, "Makefile"), "all:\n\techo hi\n");
+    writeFileSync(path.join(targetRoot, "CMakeLists.txt"), "cmake_minimum_required(VERSION 3.10)\n");
+    // 明确不加的类型：数据/锁文件
+    writeFileSync(path.join(targetRoot, "data.dat"), "binary-ish payload\n");
+    writeFileSync(path.join(targetRoot, "deps.lock"), "locked\n");
+    const { jsonPath } = getCoveragePaths(outputDir);
+    const map = loadCoverageMap(jsonPath, targetRoot, outputDir);
+    const rels = Object.keys(map.files);
+    for (const want of ["src/trampoline.cu", "src/impl.cc", "src/header.hh", "src/boot.S", "src/isr.asm", "Makefile", "CMakeLists.txt"]) {
+      assert.ok(rels.includes(want), `expected walkFiles to include ${want}`);
+    }
+    assert.ok(!rels.includes("data.dat"), ".dat must not be tracked");
+    assert.ok(!rels.includes("deps.lock"), ".lock must not be tracked");
+    // basename 兜底也须作用于 resolveToRel（读取 Makefile 才能记事件）
+    assert.equal(resolveToRel(path.join(targetRoot, "Makefile"), targetRoot, outputDir), "Makefile");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("resolveToRel：outputDir 内外路径的放行/拦截", () => {
   const { root, targetRoot, outputDir } = makeFixture();
   try {
