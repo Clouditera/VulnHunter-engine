@@ -34,7 +34,7 @@ interface RunState {
 const WF_DOC = `\
 可用 workflow：
 - audit-lite：onboard→build→research→hunt 多轮→每条 HYP 走研判链。
-常用 params：vuln_focus（漏洞关注方向，建议给）、rounds（hunt 轮数，默认 3）、chain_filter（每轮前 K 条 HYP 走链）、sandbox_cfg（沙箱 ssh 配置，给了就走 dynamic-verify 含沙箱复现，不给就是纯静态 static-verify）。`;
+常用 params：vuln_focus（漏洞关注方向，建议给）、rounds（hunt 轮数的显式封顶；一般不用给——缺省无上限，hunt 自主跑到停轮条件：覆盖达标且当轮零新增，兜底连续 3 轮零新增）、chain_filter（每轮前 K 条 HYP 走链；缺省全量）、sandbox_cfg（沙箱 ssh 配置，给了就走 dynamic-verify 含沙箱复现，不给就是纯静态 static-verify）。`;
 
 function readRuns(workdir: string): Array<{ runId: string; workflow: string; stages: Record<string, string> }> {
   const dir = join(workdir, "runs");
