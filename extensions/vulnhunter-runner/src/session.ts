@@ -31,6 +31,8 @@ export interface SessionCtx {
   engineDir: string;
   workdir: string;
   params: Record<string, string>;
+  /** 当前 run（runtime 注入；进台账记录，跨 run 续跑/观察台拼接更精准） */
+  runId?: string;
 }
 
 export interface SessionHandle {
@@ -183,6 +185,8 @@ export async function startSession(ctx: SessionCtx, opts: {
   const cov = getCoveragePaths(ctx.workdir);
   const covCfg = loadCoverageConfig(ctx.workdir);
   let covOn = opts.agent === "hunt";
+  // 台账/血缘统一带 run 标识（fish 09-15）
+  const ln = (rec: Record<string, unknown>) => lineage(ctx.workdir, ctx.runId ? { run: ctx.runId, ...rec } : rec);
   // pi 的 tool_execution_end 事件不带 args（09-11 实踩：全程零事件），
   // 须在 start 暂存参数、end 配对确认未出错后再记。
   const covReads = new Map<string, unknown>();
@@ -239,7 +243,7 @@ export async function startSession(ctx: SessionCtx, opts: {
         try {
           if (firstTry) {
             if (marks?.start) handle.mark(marks.start);   // 任务发出前打 start（pi 的 prompt 会阻塞到完成，只能打在提交前——树序正确：start 标在用户消息前）
-            lineage(ctx.workdir, {
+            ln({
               id, action: "task-start", task: taskId, file: sessFile, agent: opts.agent, target,
               label: marks?.label, marks: marks ? { start: marks.start, done: marks.done } : undefined, prompt: preview,
             });
@@ -252,7 +256,7 @@ export async function startSession(ctx: SessionCtx, opts: {
           const endEntry = smP.getLeafId() ?? undefined;
           const startEntry = findTaskStart(smP, preLeaf, endEntry);
           if (marks?.done) handle.mark(marks.done);                 // 完成后打 done
-          lineage(ctx.workdir, {
+          ln({
             id, action: "task-end", task: taskId, file: sessFile, agent: opts.agent, target,
             label: marks?.label, startEntry, endEntry, status: "done",
             attempts: failures + 1, startedAt: new Date(startedAt).toISOString(),
@@ -262,9 +266,9 @@ export async function startSession(ctx: SessionCtx, opts: {
         } catch (e) {
           failures++;
           if (failures >= 3) {
-            lineage(ctx.workdir, { id, action: "abort", reason: String(e) });
+            ln({ id, action: "abort", reason: String(e) });
             const endEntry = smP.getLeafId() ?? undefined;
-            lineage(ctx.workdir, {
+            ln({
               id, action: "task-end", task: taskId, file: sessFile, agent: opts.agent, target,
               label: marks?.label, startEntry: findTaskStart(smP, preLeaf, endEntry), endEntry, status: "aborted",
               attempts: failures, startedAt: new Date(startedAt).toISOString(),
@@ -286,7 +290,7 @@ export async function startSession(ctx: SessionCtx, opts: {
       const { branchSummarize } = await import("./branch-summary.ts");
       const r = await branchSummarize(sess as unknown as Parameters<typeof branchSummarize>[0], ctx.engineDir, label, opts2);
       // 折叠台账（task summary = 唯一折叠操作）：覆盖区间 + 成员任务；coveredBy 派生
-      lineage(ctx.workdir, {
+      ln({
         id, action: "fold", file: sessFile, kind: "task-summary", label, summaryEntry: r.summaryId, summaryLabel: opts2.summaryLabel,
         attach: r.attachId, from: r.fromId, covered: r.coveredIds.length, coveredIds: r.coveredIds,
         members: tasksCovering(ctx.workdir, new Set(r.coveredIds)),
@@ -301,12 +305,12 @@ export async function startSession(ctx: SessionCtx, opts: {
       // 裸 goto(X) 后叶子正是 X 锚点条目，此时打标会毁掉锚点（09-11 mem-b hunt3 实踩）。
       // 调用方责任：goto 后、打标前先让叶子推进（发消息/摘要），或像 fresh hunt 那样跳过 start 标。
       sm2.appendLabelChange(leaf, label);
-      lineage(ctx.workdir, { id, action: "mark", label, entry: leaf });
+      ln({ id, action: "mark", label, entry: leaf });
     },
 
     async compact(instructions?: string) {
       await sess.compact(instructions);
-      lineage(ctx.workdir, { id, action: "compact" });
+      ln({ id, action: "compact" });
     },
 
     async goto(label: string, opts?: { summarize?: boolean; customInstructions?: string; summaryLabel?: string }) {
@@ -321,7 +325,7 @@ export async function startSession(ctx: SessionCtx, opts: {
         label: opts?.summaryLabel,
       });
       if (r.cancelled) throw new Error(`goto("${label}") 被取消`);
-      lineage(ctx.workdir, { id, action: "goto", label, summarize: !!opts?.summarize, summaryLabel: opts?.summaryLabel });
+      ln({ id, action: "goto", label, summarize: !!opts?.summarize, summaryLabel: opts?.summaryLabel });
     },
 
     async fork(newId: string, newAgent?: string, newBinding?: FnBinding) {
@@ -335,7 +339,7 @@ export async function startSession(ctx: SessionCtx, opts: {
       const tmp = SessionManager.open(srcFile);
       const path = tmp.createBranchedSession(leaf);
       if (!path) throw new Error("fork 失败：createBranchedSession 未返回路径");
-      lineage(ctx.workdir, { id, action: "fork", child: newId, childAgent: newAgent ?? opts.agent, file: path });
+      ln({ id, action: "fork", child: newId, childAgent: newAgent ?? opts.agent, file: path });
       return startSession(ctx, { agent: newAgent ?? opts.agent, id: newId, binding: newBinding ?? opts.binding, sessionFile: path });
     },
 
@@ -370,6 +374,6 @@ export async function startSession(ctx: SessionCtx, opts: {
     },
   };
 
-  lineage(ctx.workdir, { id, action: "start", agent: opts.agent, resumed: !!opts.sessionFile, file: sessFile });
+  ln({ id, action: "start", agent: opts.agent, resumed: !!opts.sessionFile, file: sessFile });
   return handle;
 }

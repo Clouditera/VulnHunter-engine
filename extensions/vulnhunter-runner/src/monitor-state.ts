@@ -9,6 +9,7 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import type { Executor } from "./executor/index.ts";
 
 export interface RunningNode {
   id: string;            // agent-startTs
@@ -22,14 +23,8 @@ export interface RunningNode {
 
 export interface MonitorEvent { ts: number; msg: string }
 
-export interface PoolInfo {
-  name: string;
-  max: number;
-  active: Map<string, number>;  // label → 开始时间戳
-  queued: string[];            // 排队任务标签（09-14 designer 主页需要明细）
-  dispatched: number;          // 累计占位——主页“已派发”
-  finished: number;            // 累计完成——主页“已结束”
-}
+/** 当前进程接入的执行器（fish 09-15 接生产）：观察台/监控读 executor.stats()，删除旧 Pool 埋点 */
+let activeExecutor: Executor | null = null;
 
 export interface RunInfo {
   runId: string;
@@ -48,7 +43,6 @@ export interface RunInfo {
 
 const running = new Map<string, RunningNode>();
 const events: MonitorEvent[] = [];
-const pools = new Map<string, PoolInfo>();
 const runs = new Map<string, RunInfo>();
 const MAX_EVENTS = 200;
 const MAX_RUNS = 100;
@@ -91,7 +85,6 @@ export function loadRuns(): void {
 export const monitorState = {
   running,
   events,
-  pools,
   runs,
   nodeStart(id: string, n: RunningNode) { running.set(id, n); },
   nodeSession(id: string, sessionFile: string) { const n = running.get(id); if (n) n.sessionFile = sessionFile; },
@@ -101,16 +94,9 @@ export const monitorState = {
     if (events.length > MAX_EVENTS) events.splice(0, events.length - MAX_EVENTS);
   },
 
-  poolRegister(name: string, max: number) { if (!pools.has(name)) pools.set(name, { name, max, active: new Map(), queued: [], dispatched: 0, finished: 0 }); },
-  poolAcquire(name: string, label: string) {
-    const p = pools.get(name);
-    if (p) { p.active.set(label, Date.now()); p.dispatched++; }
-  },
-  poolRelease(name: string, label: string) {
-    const p = pools.get(name);
-    if (p && p.active.delete(label)) p.finished++;
-  },
-  poolQueue(name: string, labels: string[]) { const p = pools.get(name); if (p) p.queued = labels; },
+  /** workflow 启动时接入执行器（容量/池/队列统计的唯一数据源） */
+  attachExecutor(ex: Executor | null) { activeExecutor = ex; },
+  getExecutor(): Executor | null { return activeExecutor; },
 
   runStart(info: RunInfo) {
     info.pid = process.pid;

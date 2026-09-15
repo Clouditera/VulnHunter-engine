@@ -132,7 +132,7 @@ export async function runStages(wf: StagedWorkflow, ctx: WorkflowContext, opts: 
     report: (m: string) => { monitorState.log(m); ctx.report(m); },   // 报告同时进事件流（09-14 观察台：停轮原因等）
     async openSession(role, agent, o = {}) {
       const file = state.sessions[role];
-      const h = await startSession(ctx, !o.fresh && file && existsSync(file)
+      const h = await startSession({ ...ctx, runId: state.runId }, !o.fresh && file && existsSync(file)
         ? { agent, id: role, sessionFile: file, binding: o.binding }
         : { agent, id: role, binding: o.binding });
       const f = h.sessionFile?.();

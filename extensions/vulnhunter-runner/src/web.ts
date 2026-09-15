@@ -91,12 +91,21 @@ function sendHtml(res: ServerResponse, html: string): void {
 
 function buildState() {
   const now = Date.now();
+  // 执行器统计（fish 09-15）：容量/池/队列 = 观察台数据源；无执行器时为空
+  const ex = monitorState.getExecutor()?.stats() ?? null;
   return {
     now,
-    pools: [...monitorState.pools.values()].map((p) => ({
-      name: p.name, max: p.max, queued: p.queued, dispatched: p.dispatched, finished: p.finished,
-      active: [...p.active.entries()].map(([label, ts]) => ({ label, ms: now - ts })),
-    })),
+    capacities: ex ? ex.capacities.map((c) => ({
+      name: c.name, permits: c.permits,
+      held: c.held.map((h) => ({ tag: h.tag, ms: now - h.since })),
+      waiting: c.waiting,
+    })) : [],
+    pools: ex ? ex.pools.map((p) => ({
+      name: p.name, max: p.concurrency, locked: p.locked,
+      queued: p.waiting, dispatched: p.completed + p.failed + p.running.length, finished: p.completed,
+      active: p.running.map((r) => ({ label: r.tag, ms: now - r.since })),
+    })) : [],
+    queues: ex ? ex.queues : [],
     running: [...monitorState.running.values()].map((n) => ({
       id: n.id, agent: n.agent, target: n.target, ms: now - n.startTs,
       sessionFile: n.sessionFile, workdir: n.workdir, cwd: n.cwd,
@@ -138,7 +147,7 @@ function apiSessionState(file: string, workdir: string) {
 
 // ---------------------------------------------------------------------------
 // 阶段详情（09-14 fish「工厂模式」：点阶段卡看一台机器的投入/产出/加工）
-// 物料模型以 queue.ts 为准：leads（待消费库存）→ todo（派发即移=排队+加工中）→ done（已裁决）；
+// 物料模型（执行器 FileQueue 后端）：leads（待消费库存）→ todo（claim 即移=加工中）→ done（办结/裁决）；
 // knowledge/ 是共享货架只增不消耗；findings/BUG-* 是成品。
 // ---------------------------------------------------------------------------
 
