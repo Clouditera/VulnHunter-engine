@@ -15,13 +15,12 @@ import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "@earendil-works/pi-ai";
 import { readdirSync, writeFileSync, mkdirSync, existsSync, statSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
 import type { Workflow, WorkflowContext } from "./src/runtime.ts";
+import { WORKFLOWS } from "./src/workflows/index.ts";
 import { createMonitorComponent } from "./src/monitor.ts";
 import { ensureWebService } from "./src/web.ts";
 
 const ENGINE_DIR = process.env.PI_CODING_AGENT_DIR ?? resolve(__dirname, "..", "..");
-const WORKFLOWS_DIR = resolve(__dirname, "src", "workflows");   // 代码资产集中 src/（fish 09-11）
 
 interface RunState {
   status: "idle" | "running" | "done" | "error";
@@ -36,7 +35,7 @@ const WF_DOC = `\
 - audit-lite：onboard→build→research→hunt 多轮→每条 HYP 走研判链。
 常用 params：vuln_focus（漏洞关注方向，建议给）、rounds（hunt 轮数，默认 3）、chain_filter（每轮前 K 条 HYP 走链）、sandbox_cfg（沙箱 ssh 配置，给了就走 dynamic-verify 含沙箱复现，不给就是纯静态 static-verify）。`;
 
-function readRuns(workdir: string): Array<{ runId: string; workflow: string; stages: Record<string, string> }> {
+function readRuns(workdir: string, onCorrupt?: (msg: string) => void): Array<{ runId: string; workflow: string; stages: Record<string, string> }> {
   const dir = join(workdir, "runs");
   if (!existsSync(dir)) return [];
   const out = [];
@@ -44,7 +43,10 @@ function readRuns(workdir: string): Array<{ runId: string; workflow: string; sta
     try {
       const j = JSON.parse(readFileSync(join(dir, f), "utf-8"));
       out.push({ runId: j.runId ?? f.replace(/\.json$/, ""), workflow: j.workflow ?? "?", stages: j.stages ?? {} });
-    } catch { /* 跳过损坏文件 */ }
+    } catch (e) {
+      // 不吞错（HALL-47）：损坏文件跳过但留痕，由调用方决定如何呈现
+      onCorrupt?.(`runs/${f} 解析失败，已跳过：${e instanceof Error ? e.message : String(e)}`);
+    }
   }
   return out;
 }
@@ -70,15 +72,14 @@ export default function (pi: ExtensionAPI) {
   // web 观察台（fish 09-14）：VULNHUNTER_WEB=1 即起，端口/绑定走 VULNHUNTER_WEB_PORT/HOST
   ensureWebService();
 
-  async function loadWorkflows() {
+  // 静态注册表（HALL-47）：workflow 与扩展本体同走 jiti，加载失败在扩展加载期即报错
+  function loadWorkflows() {
     workflows.clear();
-    for (const f of readdirSync(WORKFLOWS_DIR).filter((f) => f.endsWith(".ts") && !f.endsWith(".d.ts"))) {
-      try {
-        const mod = await import(pathToFileURL(join(WORKFLOWS_DIR, f)).href);
-        const w: Workflow = mod.default ?? (typeof mod.run === "function" ? { name: f.replace(/\.ts$/, ""), run: mod.run } : undefined);
-        if (w?.name && typeof w.run === "function") workflows.set(w.name, w);
-      } catch { /* 单个 workflow 加载失败不拖垮整体 */ }
+    for (const w of WORKFLOWS) {
+      if (w?.name && typeof w.run === "function") workflows.set(w.name, w);
+      else state.log.push(`workflow 形态非法，已跳过：${String(w?.name)}`);
     }
+    if (workflows.size === 0) state.error = "未加载到任何 workflow（注册表为空或全部形态非法）";
   }
 
   pi.registerTool(defineTool({
@@ -97,10 +98,11 @@ export default function (pi: ExtensionAPI) {
       const bad = (text: string): never => { throw new Error(`ERROR: ${text}`); };
 
       if (args.op === "status") {
-        const runs = readRuns(workdir);
+        const warnings: string[] = [];
+        const runs = readRuns(workdir, (m) => warnings.push(m));
         const cur = state.status === "running" ? `当前在跑：${state.workflow}（runId=${state.runId}）\n最近日志：\n${state.log.slice(-8).join("\n")}` : `当前空闲（上次状态：${state.status}${state.error ? "，错误：" + state.error : ""}）`;
         const hist = runs.map((r) => `runId=${r.runId} workflow=${r.workflow} 阶段：${Object.entries(r.stages).map(([k, v]) => `${k}:${v}`).join(" ")}`).join("\n");
-        return ok(`${cur}\n\n历史 run：\n${hist || "（无）"}`);
+        return ok(`${cur}\n${warnings.length ? `\n⚠ ${warnings.join("\n⚠ ")}\n` : ""}\n历史 run：\n${hist || "（无）"}`);
       }
 
       if (args.op === "report") {
@@ -109,11 +111,14 @@ export default function (pi: ExtensionAPI) {
 
       if (args.op === "run" || args.op === "resume") {
         if (state.status === "running") bad(`已有 workflow 在跑：${state.workflow}（一会话一任务；先 status 看进度，跑完再启动新的）`);
-        await loadWorkflows();
+        loadWorkflows();
         const name = args.workflow ?? state.workflow;
         if (!name) bad(`resume 缺 workflow 名，且本会话没有跑过任何 workflow。可用：${[...workflows.keys()].join(", ")}`);
         const w = workflows.get(name);
-        if (!w) bad(`未知 workflow：${name}。可用：${[...workflows.keys()].join(", ")}`);
+        if (!w) {
+          const hint = workflows.size === 0 ? "。可用列表为空通常是 workflow 加载失败或全部形态非法，请用 op:\"status\" 查 error 与日志" : "";
+          bad(`未知 workflow：${name}。可用：${[...workflows.keys()].join(", ")}${hint}`);
+        }
 
         // resume：自动定位上次 failed 的阶段
         let runOpts: { runId?: string; from?: string } = {};
