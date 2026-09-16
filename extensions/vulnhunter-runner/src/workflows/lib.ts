@@ -89,7 +89,8 @@ export async function runHypChain(ctx: LibCtx, init: SessionHandle, hypFile: str
     chain.mark(`${stageCode}(${hypShort})-done[${ing},${stageCode}(${hypShort})][+BUG-${hypShort}·confirmed]`);
     ctx.report(`裁决：${hypId} → confirmed（finding 已产出）`);
 
-    if (dynamicMode && readSandboxState(ctx.workdir) === "available") {
+    // skip_ev：显式跳过 ev-assess 环节（只跑 verify 链、不做影响评估）
+    if (dynamicMode && !ctx.params.skip_ev && readSandboxState(ctx.workdir) === "available") {
       await opts.sandboxPool.submit(async () => {
         const target = `findings/${hypId.replace(/^HYP-/, "BUG-")}/report.yaml`;
         // dynamic-verify 已含复现；这里只判 ev 门槛（poc reproduced 且 exp pending）后接 ev-assess
