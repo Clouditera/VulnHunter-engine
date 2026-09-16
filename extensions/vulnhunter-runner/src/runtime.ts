@@ -152,6 +152,7 @@ export async function runStages(wf: StagedWorkflow, ctx: WorkflowContext, opts: 
   let active = !opts.from && !opts.only;
   for (const st of stages) {
     if (opts.only && st.name !== opts.only) continue;
+    if (opts.only) active = true;   // 单步模式：命中目标阶段即激活（只跑这一个；fish 09-16 实验暴露原实现整段跳空）
     if (!active && st.name === opts.from) active = true;
     if (!active) continue;
     if (!opts.only && state.stages[st.name] === "done") continue;   // 断点续跑跳过已完成
