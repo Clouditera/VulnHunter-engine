@@ -1,0 +1,39 @@
+metadata:
+  title: ""              # 一句话：受影响功能(按业务职责称呼) + 漏洞类型 + 后果；各段一个惯用词
+  vuln_type: other
+  finding_class: vulnerability # vulnerability=正式漏洞 | risk=前提苛刻/影响有限/弱点
+  cwe: ""
+  cvss_vector: ""
+  cvss_score: 0
+  ev_vector: ""
+  ev_score: 0
+  ev_priority: P3
+  ev_rationale: ""       # EV 各维度判断依据（逐维度）
+  poc_status: pending    # pending=待复现 | reproduced=已复现 | fail-reproduced=已具备条件但复现失败 | blocked=执行环境或外部条件不足 | not-needed=风险类不做复现
+  affected_versions: "unknown" # 已确认/推断的受影响版本范围；未知时写 unknown
+
+description:
+  summary: ""               # 概览：一段读懂——缺陷在哪(file:line)/怎样触发(注入类=受控输入经某路径到触发点;其他=某顺序/状态/配置下成立)/后果/前提是否易满足。
+                            #   先清晰再简洁；不逐步展开(交给 dataflow)，不重复 metadata 标签(cwe/vuln_type/严重级别)。
+  background: ""            # 定位：项目是什么 + 模块干什么 + 跟这漏洞相关的输入或数据(按类型:外部输入/敏感数据/认证或配置前提)；
+                            #   停在缺陷本身之前，不写机制、不评严重性(归 dataflow/flaw、summary、评分)。
+
+code:
+  dataflow:
+    - step: 1
+      location: ""    # file:line
+      function: ""    # 所在函数/路由（如适用）
+      role: ""        # 污点类填 source(污点源)|propagation(传播)|sink(危险点)；时序/状态/配置类可留空
+      snippet: ""     # 该 location 处的真实代码原文(逐字复制，非转述)，让读者看得见代码本身
+      description: "" # 讲清这一步数据发生了什么：如何进入 / 传播或被解析 / 在 sink 处被如何(不当)使用
+      # flaw: ""       # 可选：点出根因那一步为何是缺陷(有 sink 时通常即 sink 步)
+  reproduction:        # 可选整块：复现配方，让复现者能直接照做，不必从描述里反推
+    medium: ""         #   复现介质：http_request | cli | script | ...
+    preconditions: []  #   前置条件(如：先注册登录拿到 Cookie)
+    request: ""        #   完整可复制的请求/命令(含必要的 header/cookie/body)
+    payload_variants: []  #  payload 变体列表(每项可加 # 注释说明用途)
+    success_condition: "" #  明确的成功判据：观察到什么现象即证明触发成功
+    notes: ""          #   补充(平台差异、注意事项、仅在授权环境操作等)
+  fix_patch: ""        # 修复点明确时写 diff --git a/ unified diff；仅无法安全给出补丁时留空
+
+references: []
