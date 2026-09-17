@@ -2,7 +2,7 @@
  * 阶段选择语义测试：only 单步 / from 续跑 / 普通全跑（fish 09-16 稳定性实验暴露 only 跳空，修复后补）
  * 运行：node tests/stage-select.spec.mjs（先构建 .dist）
  */
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runStages } from "../.dist/src/runtime.js";
@@ -50,6 +50,24 @@ await t("only 可重复执行：阶段已 done 仍会再跑", async () => {
   ran.length = 0;
   await runStages(mkWf(ran), mkCtx(dir), { runId: "x4", only: "b" });
   assert(ran.join(",") === "b", `second run expect [b] got [${ran}]`);
+});
+
+await t("阶段失败：stageErrors 落 run state（message+at）；重跑成功后清除", async () => {
+  const dir = tmp();
+  const boom = { name: "spec", stages: () => [
+    { name: "a", run: async () => { throw new Error("boom-detail"); } },
+  ] };
+  try { await runStages(boom, mkCtx(dir), { runId: "e1" }); throw new Error("应当抛错"); }
+  catch (e) { assert(/boom-detail/.test(String(e?.message ?? e)), String(e?.message ?? e)); }
+  let state = JSON.parse(readFileSync(join(dir, "runs", "spec-e1.json"), "utf-8"));
+  assert(state.stages.a === "failed", JSON.stringify(state.stages));
+  assert(String(state.stageErrors?.a?.message ?? "").includes("boom-detail"), JSON.stringify(state.stageErrors));
+  assert(typeof state.stageErrors?.a?.at === "string" && !Number.isNaN(Date.parse(state.stageErrors.a.at)), JSON.stringify(state.stageErrors));
+  const ok = { name: "spec", stages: () => [{ name: "a", run: async () => {} }] };
+  await runStages(ok, mkCtx(dir), { runId: "e1", only: "a" });
+  state = JSON.parse(readFileSync(join(dir, "runs", "spec-e1.json"), "utf-8"));
+  assert(state.stages.a === "done", JSON.stringify(state.stages));
+  assert(!state.stageErrors || !("a" in state.stageErrors), `成功后应清除：${JSON.stringify(state.stageErrors)}`);
 });
 
 console.log(`\n=== ${pass} passed, ${fail} failed ===`);
