@@ -61,6 +61,18 @@ function dirMayContainTarget(cfg: CoverageConfig, rel: string): boolean {
   return inc && !underAny(rel, cfg.exclude);
 }
 
+/** 工作区目录（如 .vulnforge）相对 targetRoot 的前缀——按实际 outputDir 计算，不硬编码名字；不在 targetRoot 内或即根时返回 null */
+function outputDirRelPrefix(targetRoot: string, outputDir: string): string | null {
+  const rel = path.relative(path.resolve(targetRoot), path.resolve(outputDir)).replaceAll(path.sep, "/");
+  if (!rel || rel === ".." || rel.startsWith("../") || path.isAbsolute(rel)) return null;
+  return rel;
+}
+
+/** rel 是否等于前缀或落在其子树内 */
+function isUnderPrefix(rel: string, prefix: string): boolean {
+  return rel === prefix || rel.startsWith(prefix + "/");
+}
+
 // ============================================================================
 // Types
 // ============================================================================
@@ -207,9 +219,12 @@ function recompute(map: CoverageMap) {
 
 function ensureInitialMap(targetRoot: string, outputDir: string, existing?: CoverageMap): CoverageMap {
   const cfg = loadCoverageConfig(outputDir);
+  const outPrefix = outputDirRelPrefix(targetRoot, outputDir);
   const files: Record<string, FileCoverage> = existing?.files ?? {};
   // 按当前统计目标裁剪：配置变了（如 vendor 纳进/排出）分母立即对齐，不残留历史条目
-  for (const rel of Object.keys(files)) if (!inCoverageTarget(cfg, rel)) delete files[rel];
+  // 自愈：工作区目录（如 .vulnforge）的存量条目一并剔除——旧事件曾以 total_lines=0 形态注入过
+  for (const rel of Object.keys(files))
+    if (!inCoverageTarget(cfg, rel) || (outPrefix && isUnderPrefix(rel, outPrefix))) delete files[rel];
   for (const full of walkFiles(targetRoot, cfg)) {
     const rel = path.relative(targetRoot, full).replaceAll(path.sep, "/");
     if (!files[rel]) {
@@ -262,6 +277,7 @@ function appendEvent(jsonlPath: string, event: CoverageEvent) {
  */
 function aggregateEvents(jsonlPath: string, map: CoverageMap): boolean {
   if (!existsSync(jsonlPath)) return false;
+  const outPrefix = outputDirRelPrefix(map.target_root, map.output_dir);
 
   let fd: number;
   try { fd = openSync(jsonlPath, "r"); } catch { return false; }
@@ -298,6 +314,8 @@ function aggregateEvents(jsonlPath: string, map: CoverageMap): boolean {
       if (fileList.length === 0) continue;
 
       for (const file of fileList) {
+        // 工作区目录（如 .vulnforge）的事件一律不回注——防旧噪声与旁路写入
+        if (outPrefix && isUnderPrefix(file, outPrefix)) continue;
         const rec: FileCoverage = map.files[file] ?? {
           path: file, total_lines: 0, read_lines: 0, coverage: 0,
           ranges: [], read_count: 0, stages: [],
@@ -333,11 +351,17 @@ function persistJson(map: CoverageMap, jsonPath: string) {
 
 /**
  * Resolve an absolute file path to a relative path under targetRoot.
- * Returns null if the path is outside targetRoot or not a trackable code file.
+ * Returns null if the path is outside targetRoot, inside the workspace outputDir,
+ * or not a trackable code file.
  */
-function resolveToRel(absPath: string, targetRoot: string, cfg: CoverageConfig = DEFAULT_COVERAGE_CONFIG): string | null {
+function resolveToRel(absPath: string, targetRoot: string, cfg: CoverageConfig = DEFAULT_COVERAGE_CONFIG, outputDir?: string): string | null {
   const resolved = path.resolve(absPath);
   if (!resolved.startsWith(targetRoot + path.sep) && resolved !== targetRoot) return null;
+  // 工作区目录（如 .vulnforge）不计入覆盖：模型读自己的笔记/台账不算阅读目标代码
+  if (outputDir) {
+    const out = path.resolve(outputDir);
+    if (resolved === out || resolved.startsWith(out + path.sep)) return null;
+  }
   if (!existsSync(resolved) || !statSync(resolved).isFile()) return null;
   if (!isProbablyCodeFile(resolved)) return null;
   const rel = path.relative(targetRoot, resolved).replaceAll(path.sep, "/");
@@ -547,11 +571,12 @@ export function recordReadCoverageEvent(args: {
   stage: string;
   input?: { path?: string; offset?: number; limit?: number };
   cfg?: CoverageConfig;
+  outputDir?: string;
 }) {
   const input = args.input;
   if (!input?.path) return;
 
-  const rel = resolveToRel(input.path, args.targetRoot, args.cfg);
+  const rel = resolveToRel(input.path, args.targetRoot, args.cfg, args.outputDir);
   if (!rel) return;
 
   const total = countLines(path.resolve(input.path));

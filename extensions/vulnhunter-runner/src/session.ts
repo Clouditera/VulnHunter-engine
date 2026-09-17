@@ -197,7 +197,7 @@ export async function startSession(ctx: SessionCtx, opts: {
     } else if (ev.type === "tool_execution_end" && (ev as any).toolName === "read" && !(ev as any).isError) {
       const a = covReads.get((ev as any).toolCallId);
       covReads.delete((ev as any).toolCallId);
-      if (a) recordReadCoverageEvent({ jsonlPath: cov.jsonlPath, targetRoot: ctx.cwd, stage: "hunt", input: a as any, cfg: covCfg });
+      if (a) recordReadCoverageEvent({ jsonlPath: cov.jsonlPath, targetRoot: ctx.cwd, stage: "hunt", input: a as any, cfg: covCfg, outputDir: ctx.workdir });
     }
   });
 
