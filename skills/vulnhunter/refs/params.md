@@ -12,8 +12,8 @@
 | chain_concurrency | 3 | 研判链并发数 |
 | hunt_coverage_threshold | 90 | hunt 主停的靶内覆盖率阈值（%） |
 | hunt_mode | 积累制 | "fresh"=每轮 hunt 从 init 重新开始（轮间零继承，靠磁盘 HYP 文件查重） |
-| coverage_include | "."（全项目） | 覆盖率统计目标，逗号分隔相对路径（如 "proxy,vendor/mcmc"）；落盘 .vulnforge/coverage.yaml |
-| coverage_exclude | 无 | 覆盖率排除路径，逗号分隔（如 "vendor,t"）；默认仅排点目录（.vulnforge/.git 等） |
+| coverage_include | "."（全项目） | 覆盖率统计目标，逗号分隔相对路径（如 "proxy,vendor/mcmc"）；支持 `*` 通配（如 "*.c"）；统计口径=文本类文件（按内容判定，二进制不计）；落盘 .vulnforge/coverage.yaml |
+| coverage_exclude | 无 | 覆盖率排除路径，逗号分隔（如 "vendor,t"）；支持 `*` 通配（如 "*.json"、"*.log"）；默认仅排点目录（.vulnforge/.git 等） |
 | output_lang | zh-CN | 产物输出语言 |
 
 ## 询问策略

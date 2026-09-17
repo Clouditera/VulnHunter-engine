@@ -6,14 +6,9 @@ import { parse as parseYaml } from "yaml";
 // Constants
 // ============================================================================
 
-const CODE_EXTENSIONS = new Set([
-  ".py", ".pyi", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs",
-  ".java", ".go", ".rs", ".c", ".h", ".cpp", ".hpp", ".cs",
-  ".rb", ".php", ".swift", ".kt", ".kts", ".scala", ".sh", ".bash",
-  ".zsh", ".fish", ".ps1", ".sql", ".html", ".css", ".scss", ".sass",
-  ".vue", ".svelte", ".yaml", ".yml", ".json", ".toml", ".ini", ".cfg",
-  ".conf", ".md", ".rst", ".txt", ".xml", ".proto", ".graphql", ".gql",
-]);
+// 内容探测（fish 09-17 定）：不再维护扩展名白名单，改按文件内容判文本/二进制——
+// 二进制排出、文本收录（全部文本类进分母）；轻量版 file(1) 思路，见 looksLikeTextFile。
+const PROBE_BYTES = 8192;
 
 // ============================================================================
 // 覆盖统计目标配置（09-11 fish 定）：.vulnforge/coverage.yaml
@@ -45,20 +40,30 @@ export function countCoverageTargetFiles(targetRoot: string, outputDir: string):
   return walkFiles(targetRoot, loadCoverageConfig(outputDir)).length;
 }
 
-/** rel（相对项目根）是否命中路径清单；"." 代表全项目 */
-function underAny(rel: string, roots: string[]): boolean {
-  return roots.some((r) => r === "." || rel === r || rel.startsWith(r + "/"));
+/** 单条目匹配：无 "*"=路径前缀（"."=全项目）；含 "*"=文件级通配（`*.json`、`src/*.c`；* 可跨 /） */
+function entryMatches(rel: string, entry: string): boolean {
+  if (entry === ".") return true;
+  if (!entry.includes("*")) return rel === entry || rel.startsWith(entry + "/");
+  const re = new RegExp("^" + entry.split("*").map((s) => s.replace(/[.+?^${}()|[\]\\]/g, "\\$&")).join(".*") + "$");
+  return re.test(rel);
 }
 
-/** 文件级判定：在 include 内且不在 exclude 内 */
+/** rel（相对项目根）是否命中路径清单（含通配条目）；"." 代表全项目 */
+function underAny(rel: string, roots: string[]): boolean {
+  return roots.some((r) => entryMatches(rel, r));
+}
+
+/** 文件级判定：在 include 内且不在 exclude 内（含通配条目） */
 export function inCoverageTarget(cfg: CoverageConfig, rel: string): boolean {
   return underAny(rel, cfg.include) && !underAny(rel, cfg.exclude);
 }
 
-/** 目录级判定：允许下潜——命中 include，或 include 根在它更深处（如 include=vendor/mcmc 时要能潜进 vendor） */
+/** 目录级判定：允许下潜——命中 include，或 include 根在它更深处（如 include=vendor/mcmc 时要能潜进 vendor）；
+ *  含 "*" 的条目按文件级处理：include 中一律允许下潜、exclude 中不剪枝 */
 function dirMayContainTarget(cfg: CoverageConfig, rel: string): boolean {
-  const inc = cfg.include.some((r) => r === "." || rel === r || rel.startsWith(r + "/") || r.startsWith(rel + "/"));
-  return inc && !underAny(rel, cfg.exclude);
+  const inc = cfg.include.some((r) => r === "." || r.includes("*") || rel === r || rel.startsWith(r + "/") || rel.startsWith(rel + "/"));
+  const exc = cfg.exclude.some((r) => !r.includes("*") && (rel === r || rel.startsWith(r + "/")));
+  return inc && !exc;
 }
 
 /** 工作区目录（如 .vulnforge）相对 targetRoot 的前缀——按实际 outputDir 计算，不硬编码名字；不在 targetRoot 内或即根时返回 null */
@@ -121,8 +126,28 @@ interface CoverageEvent {
 // File system helpers
 // ============================================================================
 
-function isProbablyCodeFile(file: string): boolean {
-  return CODE_EXTENSIONS.has(path.extname(file).toLowerCase());
+/** 读文件头 ~8KB 判文本/二进制：NUL→二进制；控制符占比>5%→二进制；UTF-16/32 BOM 放行；空文件按文本 */
+export function looksLikeTextFile(full: string): boolean {
+  let fd: number;
+  try { fd = openSync(full, "r"); } catch { return false; }
+  try {
+    const buf = Buffer.alloc(PROBE_BYTES);
+    const n = readSync(fd, buf, 0, PROBE_BYTES, 0);
+    if (n <= 0) return true; // 空文件按文本（0 行，无害）
+    // BOM：UTF-16/UTF-32 天然含 NUL，先识别放行
+    if (n >= 2 && ((buf[0] === 0xff && buf[1] === 0xfe) || (buf[0] === 0xfe && buf[1] === 0xff))) return true;
+    let i = 0;
+    if (n >= 3 && buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf) i = 3; // UTF-8 BOM 跳过
+    let ctrl = 0, total = 0;
+    for (; i < n; i++) {
+      const b = buf[i];
+      total++;
+      if (b === 0) return false; // NUL → 二进制
+      const isWs = b === 0x09 || b === 0x0a || b === 0x0c || b === 0x0d || b === 0x08 || b === 0x1b;
+      if (!isWs && (b < 0x20 || b === 0x7f)) ctrl++;
+    }
+    return total > 0 && ctrl / total <= 0.05;
+  } finally { closeSync(fd); }
 }
 
 function countLines(file: string): number {
@@ -153,7 +178,7 @@ function walkFiles(root: string, cfg: CoverageConfig): string[] {
       try { st = statSync(full); } catch { continue; }
       if (st.isDirectory()) {
         if (dirMayContainTarget(cfg, childRel)) walk(full, childRel);
-      } else if (st.isFile() && isProbablyCodeFile(full) && st.size <= 2_000_000 && inCoverageTarget(cfg, childRel)) out.push(full);
+      } else if (st.isFile() && st.size <= 2_000_000 && inCoverageTarget(cfg, childRel) && looksLikeTextFile(full)) out.push(full);
     }
   }
   walk(root, "");
@@ -363,7 +388,7 @@ function resolveToRel(absPath: string, targetRoot: string, cfg: CoverageConfig =
     if (resolved === out || resolved.startsWith(out + path.sep)) return null;
   }
   if (!existsSync(resolved) || !statSync(resolved).isFile()) return null;
-  if (!isProbablyCodeFile(resolved)) return null;
+  if (!looksLikeTextFile(resolved)) return null;
   const rel = path.relative(targetRoot, resolved).replaceAll(path.sep, "/");
   if (!inCoverageTarget(cfg, rel)) return null;
   return rel;

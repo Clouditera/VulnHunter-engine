@@ -32,4 +32,4 @@
 
 ## 覆盖率
 
-hunt 精读过的文件计入覆盖率（只统计 hunt 阶段）；统计目标由 `coverage.yaml`（runner 参数 coverage_include/exclude 落盘）圈定，默认全项目仅排点目录。
+hunt 精读过的文件计入覆盖率（只统计 hunt 阶段）；统计目标由 `coverage.yaml`（runner 参数 coverage_include/exclude 落盘，支持 `*` 通配如 `*.c`）圈定，默认全项目仅排点目录。文件按内容判定文本/二进制（文本类计入分母，二进制不计）；工作区 `.vulnforge` 不记录不统计。
