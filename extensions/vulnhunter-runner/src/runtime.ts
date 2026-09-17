@@ -86,6 +86,8 @@ export interface RunState {
   sessions: Record<string, string>;
   /** workflow 自定义进度数据 */
   data: Record<string, unknown>;
+  /** 阶段失败明细（随 save() 落 run json；原先失败无任何错误详情，查无可查） */
+  stageErrors?: Record<string, { message: string; at: string }>;
 }
 
 export interface StageCtx extends WorkflowContext {
@@ -163,10 +165,18 @@ export async function runStages(wf: StagedWorkflow, ctx: WorkflowContext, opts: 
     save();
     try {
       await st.run(sctx);
-      state.stages[st.name] = "done"; save();
+      state.stages[st.name] = "done";
+      if (state.stageErrors) delete state.stageErrors[st.name]; // 重跑成功后清旧错
+      save();
     } catch (e) {
-      state.stages[st.name] = "failed"; save();
+      state.stages[st.name] = "failed";
+      (state.stageErrors ??= {})[st.name] = {
+        message: (e instanceof Error ? (e.stack ?? e.message) : String(e)).slice(0, 4000),
+        at: new Date().toISOString(),
+      };
+      save();
       ctx.report(`阶段 ${st.name} 失败：${String(e).slice(0, 200)}（修复后可 --from ${st.name} 续跑）`);
+      console.error(`[runner] 阶段 ${st.name} 失败：${String(e).replace(/\s+/g, " ").slice(0, 500)}`);
       monitorState.runEnd(ctx.workdir, runId, "error", `${st.name}: ${String(e).slice(0, 120)}`);
       throw e;
     } finally {
