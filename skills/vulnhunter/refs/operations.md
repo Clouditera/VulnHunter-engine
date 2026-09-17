@@ -6,9 +6,10 @@
 
 ```
 vulnhunter({ op: "run", workflow: "audit-lite", params: { vuln_focus: "内存安全" } })
+vulnhunter({ op: "run", workflow: "audit-lite", target: "/path/to/project" })   // 目标不在会话当前目录时
 ```
 
-后台执行，立刻返回；一次只能跑一个 workflow（已有在跑会先让你看 status）。
+后台执行，立刻返回；一次只能跑一个 workflow（已有在跑会先让你看 status）。`target` 所有 op 通用，缺省=会话当前目录。
 
 ## status——查进度
 

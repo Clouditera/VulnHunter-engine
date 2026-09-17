@@ -1,28 +1,27 @@
 ---
 name: vulnhunter
-description: VulnHunter 引擎使用指南——外层助手把用户的审计需求转成 workflow 执行（选 workflow、集参数、启动跟进、解读结果）。用户表达代码审计或漏洞挖掘意图时使用
+description: VulnHunter 引擎使用指南——帮用户把审计需求转成 workflow 执行（选 workflow、集参数、启动跟进、解读结果）。用户表达代码审计或漏洞挖掘意图时使用
 ---
 
-# VulnHunter 使用指南（索引）
+# VulnHunter 引擎说明
 
-你是外层助手：帮用户启动和解读审计，不亲自审计。细节按场景查 refs/：
+VulnHunter 是全自动的代码安全审计引擎：给它一个项目和几条信息，它自己跑完整场审计——先摸清项目（结构、构建与部署方式、公开信息），再逐轮精读代码、挖掘风险假设，每条假设走研判链（纯静态，或有沙箱时动态复现），最后产出 findings（漏洞与风险，带复现证据）。启动后它自治运行、一次一个任务；过程中你盯进度、结束后把结果讲清楚。你不亲自审代码。
+
+## 引擎需要的信息
+
+启动一次审计，它需要四样信息——都有缺省，后两样可以没有：
+
+1. **目标**：一个本地代码目录——引擎以它为工作根，产物全部写在它下面的 `.vulnforge/`。用户给现成路径即可；给 git 地址就先 clone 到本地再用。
+2. **范围**：哪些代码算"靶内"——影响引擎的精读选点与停轮：范围外的不计入、不会被精读。缺省=全项目；项目偏大或用户有偏好时，可收窄到若干模块、或排除依赖/生成物（写法见 `refs/params.md`）。
+3. **方向**：主要关注哪类漏洞（如内存安全、命令注入）；缺省=全方向。
+4. **沙箱**（可选）：给了引擎能在隔离环境实际复现漏洞；不给就是纯静态分析。
+
+引擎面向有源码的项目（能读、能建）；纯二进制、资源包、空仓库没有可审的东西。
+
+## 细节索引
 
 | 场景 | 文档 |
 |---|---|
-| 选哪个 workflow、参数怎么填 | refs/workflows.md、refs/params.md |
-| 查看进度、续跑失败、报告异常 | refs/operations.md |
-| 解释产物位置、目录结构、会话标记 | refs/runtime-layout.md |
-
-## 快速路径（最常见场景）
-
-用户说"审计这个项目"（以 audit-lite 为例）：
-
-1. 确认当前目录就是目标项目；不是则请用户到目标目录重启会话。
-2. 问一句漏洞关注方向（vuln_focus）；用户说"都看看"就留空。
-3. 启动：`vulnhunter({ op: "run", workflow: "audit-lite", params: { vuln_focus: "…" } })`。
-4. 跟进：`vulnhunter({ op: "status" })`，把阶段进展翻译给用户。
-5. 完成：`vulnhunter({ op: "report" })`，解读 findings。
-
-## 一句话原理
-
-workflow 启动后自治运行：onboard→build→research→hunt 多轮→每条风险假设（HYP）走研判链；有沙箱配置（sandbox_cfg）时研判含沙箱复现（dynamic-verify），没有就是纯静态裁决（static-verify）。你的工作是把这些内部状态翻译给用户，不替它做决定。
+| 选哪个 workflow、参数怎么写（含范围与通配） | refs/workflows.md、refs/params.md |
+| 启动、查进度、续跑、读结果 | refs/operations.md |
+| 产物位置、目录结构、会话标记 | refs/runtime-layout.md |

@@ -34,7 +34,7 @@ interface RunState {
 const WF_DOC = `\
 可用 workflow：
 - audit-lite：onboard→build→research→hunt 多轮→每条 HYP 走研判链。
-常用 params：vuln_focus（漏洞关注方向，建议给）、rounds（hunt 轮数的显式封顶；一般不用给——缺省无上限，hunt 自主跑到停轮条件：覆盖达标且当轮零新增，兜底连续 3 轮零新增）、chain_filter（每轮前 K 条 HYP 走链；缺省全量）、sandbox_cfg（沙箱 ssh 配置，给了就走 dynamic-verify 含沙箱复现，不给就是纯静态 static-verify）。`;
+常用 params：vuln_focus（漏洞关注方向，建议给）、coverage_include / coverage_exclude（审计范围/覆盖率口径，缺省全项目；支持 *.ext 通配）、sandbox_cfg（沙箱 ssh 配置，给了就走 dynamic-verify 含沙箱复现，不给就是纯静态 static-verify）、rounds / chain_filter（试验与限成本用，一般不用给）。`;
 
 function readRuns(workdir: string): Array<{ runId: string; workflow: string; stages: Record<string, string> }> {
   const dir = join(workdir, "runs");
@@ -90,17 +90,20 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool(defineTool({
     name: "vulnhunter",
     label: "VulnHunter",
-    description: `VulnHunter 审计引擎入口。op=run 启动审计（后台）/ status 查进度 / resume 断点续跑 / report 读结果。${WF_DOC}`,
+    description: `VulnHunter 审计引擎入口。op=run 启动审计（后台）/ status 查进度 / resume 断点续跑 / report 读结果。target=目标项目路径（缺省=会话当前目录）。${WF_DOC}`,
     parameters: Type.Object({
       op: Type.String({ description: "run | status | resume | report" }),
       workflow: Type.Optional(Type.String({ description: "run/resume 用：workflow 名（run 必填，resume 缺省=上次）" })),
-      params: Type.Optional(Type.Record(Type.String(), Type.String(), { description: "run 用：vuln_focus / rounds / chain_filter / sandbox_cfg 等" })),
+      target: Type.Optional(Type.String({ description: "目标项目路径（缺省=会话当前目录）；相对路径按当前目录解析" })),
+      params: Type.Optional(Type.Record(Type.String(), Type.String(), { description: "run 用：vuln_focus / coverage_include / coverage_exclude / sandbox_cfg 等" })),
       from: Type.Optional(Type.String({ description: "resume 用：从哪个阶段续跑（如 hunt1 / chains）；不填=自动从上次的 failed 阶段" })),
     }),
     async execute(_id, args, _signal, _onUpdate, ectx) {
-      const workdir = join(ectx.cwd, ".vulnforge");
+      const targetRoot = args.target ? resolve(ectx.cwd, args.target) : ectx.cwd;
+      const workdir = join(targetRoot, ".vulnforge");
       const ok = (text: string) => ({ content: [{ type: "text" as const, text }], details: {} });
       const bad = (text: string): never => { throw new Error(`ERROR: ${text}`); };
+      if (args.target && (!existsSync(targetRoot) || !statSync(targetRoot).isDirectory())) bad(`target 不存在或不是目录：${targetRoot}（相对路径按会话当前目录解析）`);
 
       if (args.op === "status") {
         const runs = readRuns(workdir);
@@ -134,7 +137,7 @@ export default function (pi: ExtensionAPI) {
 
         state.status = "running"; state.workflow = name; state.runId = runOpts.runId; state.log = []; state.error = undefined;
         const ctx: WorkflowContext = {
-          cwd: ectx.cwd,
+          cwd: targetRoot,
           engineDir: ENGINE_DIR,
           workdir,
           params: args.params ?? {},
@@ -155,16 +158,18 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool(defineTool({
     name: "mark_scope",
     label: "Mark Scope",
-    description: "标记审计范围：确认要审计的模块/文件清单，统计代码行数，写入 .vulnforge/scope.yaml 作为审计完成门禁基准。",
+    description: "标记审计范围：确认要审计的模块/文件清单，统计代码行数，写入目标项目 .vulnforge/scope.yaml；target 缺省=会话当前目录。",
     parameters: Type.Object({
       entries: Type.Array(Type.Object({
         path: Type.String({ description: "相对项目根的文件或目录路径" }),
         threshold: Type.Optional(Type.Number({ description: "覆盖率达标阈值（百分比），默认 90" })),
       })),
       excludes: Type.Optional(Type.Array(Type.String(), { description: "排除路径" })),
+      target: Type.Optional(Type.String({ description: "目标项目路径（缺省=会话当前目录）" })),
     }),
     async execute(_id, args, _signal, _onUpdate, ectx) {
-      const cwd = ectx.cwd;
+      const cwd = args.target ? resolve(ectx.cwd, args.target) : ectx.cwd;
+      if (args.target && !existsSync(cwd)) throw new Error(`ERROR: target 不存在：${cwd}（相对路径按会话当前目录解析）`);
       const CODE_EXT = /\.(c|h|cc|cpp|rs|go|py|js|ts|java|rb|lua|zig|m|mm)$/i;
       const countLines = (p: string): number => {
         try {

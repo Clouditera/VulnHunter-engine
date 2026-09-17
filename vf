@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# VulnHunter-engine 启动器——在目标项目根目录下运行。
+# VulnHunter-engine 启动器——启动位置不限：可在目标项目目录，也可在任何目录启动后用路径指定目标（target）。
 # 本体 = 裸 pi：SYSTEM.md（主会话身份）、扩展（vulnhunter-runner）与技能（skills/）
 # 经 PI_CODING_AGENT_DIR 自动发现；vulnhunter skill 承载使用指南。
 set -euo pipefail
