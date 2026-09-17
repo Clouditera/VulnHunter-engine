@@ -96,14 +96,37 @@ export function serializeEntries(entries: Array<Record<string, unknown>>): strin
 
 interface ProviderConn { baseUrl: string; apiKey: string; modelId: string }
 
-/** 从引擎 models.json 解析 provider 连接信息（我们的 provider 全是 openai-completions 兼容） */
-function resolveProvider(engineDir: string, provider: string, modelId: string): ProviderConn {
+/** 从引擎 models.json 解析 provider 连接信息（我们的 provider 全是 openai-completions 兼容）。
+ *  key 解析链（V2 阻断件修复，Leo 09-17）：models.json 内联 → `$VAR` env → `auth.json[provider].key`。
+ *  容器设计「key 不进 env」：跑批的 models.json 写 `$VH_KEY_*` 引用而 env 不设值，真 key 在 /agent/auth.json
+ *  （pi 正常调用同源）；只试 env 会必抛「环境变量未设置」，compress 与 hunt 轮末摘要秒败。
+ *  全链失败时报错列明尝试来源，查无可查的问题不再复现。 */
+export function resolveProvider(engineDir: string, provider: string, modelId: string): ProviderConn {
   const mj = JSON.parse(readFileSync(join(engineDir, "models.json"), "utf-8"));
   const p = mj.providers?.[provider];
   if (!p) throw new Error(`models.json 里找不到 provider ${provider}`);
+  const attempted: string[] = [];
   const keyRef = String(p.apiKey ?? "");
-  const apiKey = keyRef.startsWith("$") ? (process.env[keyRef.slice(1)] ?? "") : keyRef;
-  if (!apiKey) throw new Error(`provider ${provider} 的 key 环境变量 ${keyRef} 未设置`);
+  let apiKey = "";
+  if (keyRef && !keyRef.startsWith("$")) {
+    apiKey = keyRef; // ① models.json 内联
+  } else if (keyRef.startsWith("$")) {
+    const envName = keyRef.slice(1);
+    apiKey = process.env[envName] ?? ""; // ② `$VAR` env
+    if (!apiKey) attempted.push(`env ${envName} 未设置`);
+  } else {
+    attempted.push("models.json apiKey 为空");
+  }
+  if (!apiKey) {
+    try {
+      const auth = JSON.parse(readFileSync(join(engineDir, "auth.json"), "utf-8")) as Record<string, { key?: string } | undefined>;
+      apiKey = auth?.[provider]?.key ?? ""; // ③ auth.json[provider].key（与 pi 调用同源）
+      if (!apiKey) attempted.push(`auth.json[${provider}] 无 key`);
+    } catch {
+      attempted.push(`auth.json[${provider}] 不可读`);
+    }
+  }
+  if (!apiKey) throw new Error(`provider ${provider} 的 key 解析失败；已尝试：${attempted.join("；")}`);
   return { baseUrl: p.baseUrl, apiKey, modelId };
 }
 
