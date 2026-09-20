@@ -374,13 +374,19 @@ function persistJson(map: CoverageMap, jsonPath: string) {
   writeFileSync(jsonPath, JSON.stringify(map, null, 2), "utf8");
 }
 
+/** 统一路径解析：相对路径按 targetRoot（会话 cwd）；绝对路径原样。09-20 实踩：路径一律按调用现场解析 */
+function resolveAbsPath(p: string, targetRoot: string): string {
+  return path.isAbsolute(p) ? path.resolve(p) : path.resolve(targetRoot, p);
+}
+
 /**
  * Resolve an absolute file path to a relative path under targetRoot.
  * Returns null if the path is outside targetRoot, inside the workspace outputDir,
  * or not a trackable code file.
  */
 function resolveToRel(absPath: string, targetRoot: string, cfg: CoverageConfig = DEFAULT_COVERAGE_CONFIG, outputDir?: string): string | null {
-  const resolved = path.resolve(absPath);
+  // 相对路径按 targetRoot 解析（read 工具按会话 cwd＝项目根解析路径；09-20 实踩：按 process.cwd() 解析会把相对路径全丢）
+  const resolved = resolveAbsPath(absPath, targetRoot);
   if (!resolved.startsWith(targetRoot + path.sep) && resolved !== targetRoot) return null;
   // 工作区目录（如 .vulnforge）不计入覆盖：模型读自己的笔记/台账不算阅读目标代码
   if (outputDir) {
@@ -604,7 +610,7 @@ export function recordReadCoverageEvent(args: {
   const rel = resolveToRel(input.path, args.targetRoot, args.cfg, args.outputDir);
   if (!rel) return;
 
-  const total = countLines(path.resolve(input.path));
+  const total = countLines(resolveAbsPath(input.path, args.targetRoot));
   if (total === 0) return;
 
   const start = Math.max(1, Number(input.offset ?? 1));

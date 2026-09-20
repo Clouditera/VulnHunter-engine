@@ -46,6 +46,15 @@ await t("记录侧：工作区文件拦截、目标文件放行", async () => {
   assert(evt.file === "src/a.c" && evt.start === 1 && evt.end === 12, `unexpected event: ${lines[0]}`);
 });
 
+await t("记录侧：相对路径按项目根解析而非进程 cwd（09-20 实踩修复）", async () => {
+  const { root, out, cov } = setup();
+  recordReadCoverageEvent({ jsonlPath: cov.jsonlPath, targetRoot: root, stage: "hunt", input: { path: "src/a.c" }, outputDir: out });
+  const lines = readFileSync(cov.jsonlPath, "utf8").trim().split("\n");
+  assert(lines.length === 1, `expect 1 event, got ${lines.length}`);
+  const evt = JSON.parse(lines[0]);
+  assert(evt.file === "src/a.c" && evt.end === 12, `unexpected event: ${lines[0]}`);
+});
+
 await t("聚合侧：旧噪声事件（单文件形态）被跳过、目录树不出现 .vulnforge", async () => {
   const { root, out, cov } = setup();
   writeFileSync(cov.jsonlPath,
