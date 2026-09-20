@@ -31,7 +31,7 @@ vulnhunter({ op: "resume", workflow: "audit-lite", from: "hunt1" })  // 或显�
 返回 findings 一览：编号 / finding_class（vulnerability 或 risk）/ CVSS / EV / 优先级 / 标题。解读给用户时：
 
 - vulnerability 且高 EV 的是重点；risk 是弱点记录，不算漏洞；
-- 每条的完整报告在 `.vulnforge/findings/<编号>/report.yaml`，用户要细节就指给他。
+- 每条的完整报告在 `.vulnforge/findings/<编号>/record.json`（JSON：报告全字段＋附件清单）；证据附件在同目录 `attachments/`。用户要细节就指给他，或读出来讲。
 
 ## 常见异常
 

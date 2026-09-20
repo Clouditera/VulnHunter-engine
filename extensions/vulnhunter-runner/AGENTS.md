@@ -22,100 +22,72 @@
 
 # 沙箱
 
-运行上下文给出 `sandbox_cfg` 时，沙箱是被测目标的唯一动态执行环境：
+运行上下文给出 `沙箱连接配置` 时，沙箱是被测目标的唯一动态执行环境：
 
 - 被测目标的构建、运行等一切动态操作只在沙箱内执行；本地仅做静态动作（读代码、写分析文档）。
-- 沙箱工具链不满足时在沙箱内补齐；仍不满足的把 blocked 与原因记入 `knowledge/build/build.md`，不回落本地。
-- 动态操作前先确认沙箱可达（短重试不超过 3 次）；确认不可达时用 `artifact update build-state` 记为 unavailable，当前任务标记 blocked（reason: sandbox-unreachable）并退出，不再重试。
-- `knowledge/build/build.md` 记录沙箱状态，是单一记录点：`sandbox: available | unreachable`，`updated: <ISO 时间>`。
+- 沙箱工具链不满足时在沙箱内补齐；仍不满足的，把 blocked 与原因记入 `knowledge/env/`，不回落本地。
+- 动态操作前先确认沙箱可达（短重试不超过 3 次）；确认不可达时用 `sandbox({op:"report", status:"unavailable", note:"原因"})` 回报，当前任务如实收尾，不再重试。
+- 沙箱可用性由 `sandbox` 工具的 report 记录（system/sandbox.json，工具独占；读侧缺省 unknown，调度侧据此阻断动态环节）。运行中平时不写它——build 首测、动态链探到不可达时才有回报义务。
 
 # 审计方法
 
-审计沿一条推进链展开，每个环节将为下一个环节提供立足点和方向：
+审计沿一条推进链展开，每个环节为下一个环节提供立足点和方向：
 
-```
-认知 → 审计链路 → 风险假设 → 成立性研判 → 动态复现 → EXP 影响评估
+```text
+画像与认知 → 风险假设 → 成立性研判 → 动态复现 → EXP 影响评估
 ```
 
-- **认知**：快速阅读某个切面的代码，从中提炼出粒度合理的安全审计链路。
-- **审计链路**：审计链路指示安全审计中的关注方向，通常为一个具体的功能点，有明确边界。
-- **风险假设**：沿链路追踪 source、数据传播、安全校验、状态、sink 后提出的具体怀疑，重在尽量不遗漏，准确性留给论证。
-- **成立性研判**：沿攻击者视角走通假设路径，对代码中的风险怀疑给出成立性裁决。
+- **画像与认知**：摸清项目结构、技术栈、入口与信任边界，产出项目画像、wiki 与安全基线（现状判断的基准）。
+- **风险假设（HYP）**：沿代码追踪 source、数据传播、安全校验、状态、sink 后提出的具体怀疑，重在尽量不遗漏，准确性留给论证。
+- **成立性研判（static-verify / dynamic-verify）**：沿攻击者视角走通假设路径，对代码中的风险怀疑给出成立性裁决；有沙箱时合并动态复现。
 - **动态复现**：对静态确认的候选构造真实运行证据，确认在动态运行环境下漏洞的存在性。
-- **EXP 影响评估**：对已 POC 复现的漏洞反思真实业务场景、攻击前提和影响深度；必要时构造最小 EXP，修正最终影响结论。
+- **EXP 影响评估（ev-assess）**：对已 POC 复现的漏洞反思真实业务场景、攻击前提和影响深度；必要时构造最小 EXP，修正最终影响结论。
 
 这条链不是一次性走完的，在每完成一个环节后，你将梳理现状，进行反思和决策，通过不断的循环，加深对目标的理解和判断。
 
 ## 策略
 
-审计由系统按下列方向调度，每个方向对应一类目标：
+审计由系统按下列方向调度，每个方向对应一类目标；**工具面按阶段开放——你只会拿到本阶段授权的工具，工具内操作不再逐项限制**（如 hunt 只有 hyp；研判链有 hyp/finding；动态链另有 sandbox）：
 
 | 方向 | 目标 |
 |---|---|
-| `onboard` | 初始化画像、wiki、威胁模型与漏洞认可口径（vuln-policy.md）初版；启用动态时确认执行环境 |
-| `cognize` | 对一个切面建立认知，产出主题 wiki 和待精读的审计链路（ADV） |
-| `research` | 检索公开信息，产出情报档案（knowledge/research/）与审计链路（ADV），补齐漏洞认可口径的 online 取证 |
-| `hunt` | 沿一条审计链路精读，产出风险假设（HYP） |
-| `static-verify` | 无沙箱时对风险假设做纯静态研判（代码路径 + 漏洞认可口径核验）：confirmed → 转化为 finding，refuted → 关闭 |
-| `dynamic-verify` | 有沙箱时对风险假设做研判并接着在沙箱中复现：confirmed 的 vulnerability 直接取得动态证据 |
-| `ev-assess` | 单漏洞：评估真实业务场景和最大影响；达不到时降级报告 |
-| `exp-build` | 组合漏洞：探索并构造破坏力最大的漏洞组合，产物写入 exploits/，经验写入 knowledge/exploits/ |
+| `onboard` | 初始化项目画像、wiki、安全基线（security.md）初版 |
+| `build` | 理解构建与部署；按需实测沙箱并回报状态（sandbox 工具） |
+| `research` | 检索公开信息与 git 考古，产出情报档案（knowledge/research/），补齐安全基线的 online 取证 |
+| `compress` | 上下文压缩跳转（无产出的调度环节） |
+| `hunt` | 逐轮精读代码，产出风险假设（HYP） |
+| `chains` | 每条 HYP 的研判链：研判（纯静态，或有沙箱时动态复现），需要时接 ev-assess |
 
-## 任务与线索流转
+# 任务流转
 
-任务与线索文件由系统统一管理，状态与流转（待处理 → 处理中 → 完成）由系统维护。产物在 `leads/`（待消费）→ `todo/`（处理中）→ `done/`（完成）间由系统流转；看到 `todo/` 里的产物说明它正在被处理。节点按任务正文读取本次对象；结构化产物经 `artifact` 元工具落盘（op+type+fields；emit_*/update_* 已收编为其 create/update 操作），散文产物用 write/edit 写入。
+任务由系统统一管理（待判 → 在判 → 办结），状态由函数在 system/ 侧维护，没有目录队列。节点按任务正文读取本次对象；结构化产物经专门工具落盘（`hyp` / `finding` / `sandbox` / `profiler`），散文产物用 write/edit 写入。你不需要关心流转细节——被派发什么就处理什么。
 
 # 工作区
 
 ## 目录
 
-**工作区根** = `output_dir`（任务书会给出），默认 `<项目>/.vulnforge`；本文相对路径均相对工作区根解析，代码阅读面向项目根。所有环节共享一个长期维护的工作区。核心记忆在 `knowledge/`：
+**工作区根** = `output_dir`（任务书会给出），默认 `<项目>/.vulnforge`；本文相对路径均相对工作区根解析，代码阅读面向项目根。所有环节共享一个长期维护的工作区：
 
-- `knowledge/profiler.yaml`：项目基础画像（onboard 产出）。
-- `knowledge/wiki/index.md`：知识库目录。
-- `knowledge/wiki/overview.md`：项目快速认知（onboard 产出）。
-- `knowledge/wiki/threat-model.md`：威胁模型，是安全判断的基准（onboard 初始化，后续由系统维护）。
-- `knowledge/vuln-policy.md`：**漏洞认可口径**——该项目中什么样的漏洞会被维护者认可：认可面、排除条款、文档化缓解、by-design 声明，每条带证据锚点（onboard 从本地资料出初版、research 补 online 取证、static-verify / dynamic-verify 研判时对照核验）。
-- `knowledge/wiki/<主题>.md`：各功能域、攻击面或基础设施认知（cognize 产出）。
-- `knowledge/worklog.md`：逐轮完成记录，帮助判断哪些方向已经做过、审计是否接近完成。
-- `knowledge/build/`：动态测试相关的环境配置和操作记录，核心说明是 `knowledge/build/build.md`。
-- `knowledge/research/`：情报档案（research 产出）——历史漏洞与修复、上游安全动态、缺陷模式等，辅助确定审计面。
-- `knowledge/exploits/`：组合 EXP 探索的成功与失败经验（exp-build 产出），供后续节点复用。
+- `knowledge/`：**知识区（唯一自由读写区）**——纯散文，用 read/write/edit：
+  - `knowledge/wiki/`：知识库——index.md 目录、overview.md 项目概览、各主题认知（功能域/攻击面/基础设施）。
+  - `knowledge/security.md`：**安全基线**——威胁模型（资产/信任边界/攻击面/优先方向，安全判断的基准）＋漏洞认可口径（认可面、排除条款、文档化缓解、by-design 声明，每条带证据锚点）；onboard 出初版、research 补 online 取证、研判时对照核验。
+  - `knowledge/research/`：情报档案（research 产出）——历史漏洞与修复、上游安全动态、缺陷模式等，辅助确定审计面。
+  - `knowledge/env/`：动态测试相关的环境配置与操作记录——构建/部署理解、沙箱使用、卡点记录。
+- `findings/`：**漏洞最终出口**（工具独占维护，不要手改）——每条 finding 一个目录：`record.json`（报告全字段）＋ `attachments/`（poc/exp 证据附件）。
+- `system/`：**内部状态**（工具/引擎独占，不要读写）——HYP 记录、run 状态、台账、sandbox/profiler 状态。
 
-其它流程产物包括：
-
-- `todo/`：待执行任务。
-- `leads/`：待处理链路和回流线索。
-- `done/`：已处理完成的任务和线索。
-- `findings/`：漏洞最终出口。按漏洞创建目录，每个目录下含 `report.yaml`；启用 POC 并复现后另含 `poc/`；启用 EXP 并评估后相关文件统一写入 `exp/`。
-- `exploits/`：组合 EXP 产物。每个组合一个目录 `exploits/EXP-<id>/`，含 `report.yaml`、组合利用脚本与验证日志，以及 `members/` 下成员 finding 结论文档副本。
-
-## findings 结构
-
-`findings/` 是漏洞最终出口，不论是静态确认还是动态复现都写到这里：
-
-```text
-findings/
-└── BUG-C1-A1-H1/
-    ├── report.yaml
-    ├── poc/
-    └── exp/
-```
-
-`report.yaml` 用 `finding_class` 区分漏洞与风险，用 `poc_status` / `exp_status` 描述动态复现和 EXP 状态；字段经函数落盘，以函数参数为准。
+> 旧版的 leads/ todo/ done/ 队列、ADV、LEAD、channels、notes、scope.yaml 均已下线；遇到旧文档提到它们，一律以本文件为准。
 
 ## 产物类型
 
-- **中间过程产物**：`todo/`、`leads/`、`done/`。它们记录流程状态、待办、线索、来源关系和执行意图，只用于审计流程内部推进。
-- **对外产物**：`knowledge/wiki/`、`findings/`、`exploits/`，以及 POC 脚本、漏洞报告、复现说明、日志等交付材料。它们描述目标项目和确认结果，用于后续阅读、复查或交付。
+- **结构化对象**：HYP、finding、沙箱状态、项目画像——经专门工具落盘，字段规格由工具定死，按工具描述调用即可。
+- **对外产物**：`knowledge/wiki/`、`findings/`（含附件），以及 POC 脚本、复现说明、日志等证据材料。它们描述目标项目和确认结果，用于后续阅读、复查或交付。
 
 ## 写入规则
 
 - **信息脱敏**：对外产物只写目标项目本身，不写宿主绝对路径（如 `/home/xxx/...`），**不写审计流程、待办、线索等中间过程概念**。对外路径使用相对路径、脚本自定位路径或占位符，例如 `<poc-dir>`、`<project-src>`；容器内约定路径可以写。
-
 - **锚点核实**：写入任何产物的 `file:line` 锚点必须经 `grep -n` 核实——read 工具输出不带行号，心算偏移必漂。
-- **知识空白与威胁模型修正**：直接用 write/edit 更新 `knowledge/wiki/`、`knowledge/vuln-policy.md`。
-- **探测性 bash 命令加 `|| true`**（pgrep/grep/ls 多目录等"无结果即非零退出"的场景），非零退出码不等于执行错误，减少噪音报错。
-- **超出当前边界的信息写成回流线索**：发现新攻击面或值得继续追的线索时，用 `artifact create lead` 落回流线索（`type: research | hunt`），由系统路由处理。
+- **知识空白与安全基线修正**：直接用 write/edit 更新 `knowledge/wiki/`、`knowledge/security.md`。
+- **探测性 bash 命令加 `|| true`**（pgrep/grep/ls 多目录等“无结果即非零退出”的场景），非零退出码不等于执行错误，减少噪音报错。
+- **超出当前边界的信息**：新攻击面或值得继续追的线索，写进 `knowledge/wiki/` 或 `knowledge/security.md`，由后续轮次消化；不再有回流线索文件。
 - **语言**：输出语言遵循当前提示词中的 `输出语言` 要求。
-

@@ -1,5 +1,7 @@
 # VulnHunter-engine 系统设计（engine-rework 定稿）
 
+> **更新说明（2026-09-20 工具重构）**：提示词体系已随工具重构更新（AGENTS.md、tasks/、skills/ 重写；队列与 ADV/LEAD 概念下线）；文中队列/产物章节过时，现行以 AGENTS.md、tasks/ 与 src/tools/ 为准。
+
 > 2026-08-31 · 依据《08-引擎演进纲领》+ 与 fish 逐节对齐（08-27~31）
 > 姊妹篇：docs/runner-design.md（调度与函数层细节）；本文重点：**提示词体系**与**流程组织**。
 

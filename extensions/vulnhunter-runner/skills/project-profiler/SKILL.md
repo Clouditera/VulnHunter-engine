@@ -1,6 +1,6 @@
 ---
 name: project-profiler
-description: 项目画像技能 — 收集项目客观事实（代码统计、技术栈、项目结构），产出 profiler.yaml。
+description: 项目画像技能 — 收集项目客观事实（代码统计、技术栈、项目结构），经 profiler 工具产出项目画像。
 ---
 
 # Project Profiler
@@ -31,13 +31,13 @@ python3 <skill_path>/profile-basic-scan.py <项目路径>
 - 构建系统类型
 - 主要依赖列表（从依赖文件中提取关键项）
 
-### Step 3：产出 profiler.yaml
+### Step 3：写入项目画像
 
-基于脚本输出和手动补充，写入 profiler.yaml。所有数值字段用精确数字，不要用近似值。
+基于脚本输出和手动补充，用 `profiler({op:"update", language:[…], frameworks:[…], entrypoints:[…], modules:[…], build:{…}})` 分节写入；一次填不完可分多次补齐。所有数值字段用精确数字，不要用近似值。存储由工具维护（system/profiler.json），不要手写文件。
 
 ### Step 4：创建 wiki 框架
 
 基于 profiler 数据创建初始 wiki：
 
-- **wiki/index.md**：wiki 索引，初始为空模板，后续 scan 逐步填充
+- **wiki/index.md**：wiki 索引，初始为空模板，后续节点逐步填充
 - **wiki/overview.md**：项目概述，基于 profiler 数据写成人类可读的概述文档

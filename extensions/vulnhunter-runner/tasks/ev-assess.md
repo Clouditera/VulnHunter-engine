@@ -6,18 +6,17 @@
 
 # 工作方式
 
-- 读任务正文给定的 finding，理解其业务背景、威胁模型与声称的影响。
-- 按真实部署方式搭建准业务环境（默认构建配置、默认组件），写 `findings/<BUG>/exp/`：business-model.md 记业务模型，threat-model.md 记围绕该 finding 的威胁模型。
+- 读任务正文给定的 finding（`finding({op:"get", id:"…"})`），理解其业务背景、威胁模型与声称的影响。
+- 按真实部署方式搭建准业务环境（默认构建配置、默认组件）；白板材料先落本地，再用 `finding({op:"update", id:"…", attachments:[{op:"add", file:"…", kind:"exp", note:"business-model | threat-model | exp"}]})` 收进附件：business-model.md 记业务模型，threat-model.md 记围绕该 finding 的威胁模型，exp.md 记结论。
 - 在准业务环境中验证真实影响，结论写 exp.md。
-- 用 `artifact update finding` 回写：exp_status（状态机枚举：reproduced / fail-reproduced / blocked / not-needed）与 ev_vector / ev_score / ev_priority / ev_rationale；真实影响与报告声称不符时，同步下调 CVSS 与影响描述，必要时将 finding_class 降为 risk。
-- 评估条件无法模拟的，状态记为 blocked，如实收尾。
+- 用 `finding({op:"update", id:"…", exp_status:"…", ev_vector:"…", ev_score:…, ev_priority:"…", ev_rationale:"…"})` 回写：exp_status（状态机枚举：reproduced / fail-reproduced / blocked / not-needed）与 EV 四维；真实影响与报告声称不符时，同步下调 CVSS 与影响描述，必要时将 finding_class 降为 risk。
+- 评估条件无法模拟、沙箱不可用的：状态记为 blocked（沙箱不可达时以 `sandbox({op:"report", status:"unavailable", note:"…"})` 回报），如实收尾。
 
 # 产出要求
 
-- **findings/<BUG>/exp/**：business-model.md、threat-model.md、exp.md 及环境脚本、日志。
-- **finding 回写**（artifact update finding）：exp_status 如实反映真实影响验证结果；EV 评分逐维度给出依据。
-- **回流线索**（artifact create lead）：评估中暴露的新攻击面。
-- **knowledge/build/**：本次动态操作的关键记录。
+- **exp 附件**（finding update attachments，kind=exp）：business-model、threat-model、exp 文档及环境脚本、日志。
+- **finding 回写**（finding update）：exp_status 如实反映真实影响验证结果；EV 评分逐维度给出依据。
+- **knowledge/env/**：本次动态操作的关键记录。
 
 # 备注
 
@@ -25,9 +24,10 @@
 - 影响达不到声称水平时如实下调，以实测为准。
 - 只做单个 finding，只对 vulnerability 执行。
 
-## 产物操作
+## 产物工具
 
-- `update finding`：exp_status + EV 四维回写；不符时下调 CVSS，必要时 finding_class 降 risk
-- `create lead`：评估暴露的新攻击面
+- `finding({op:"get"|"update", …})`：读 finding / exp_status + EV 四维回写 / 附件收编（attachments 三操作）
+- `sandbox({op:"report"|"get"})`：沙箱状态
+- write/edit：knowledge/env/ 记录
 
-产出统一走 `artifact` 工具（op+type+fields 三段）；不确定字段规格时先 `artifact({op:"spec", type:"<类型>"})` 查权威字段表。落盘产物不要自行删除。
+结构化产物由工具独占落盘（system/、findings/），不要手改存储文件。落盘产物不要自行删除。
