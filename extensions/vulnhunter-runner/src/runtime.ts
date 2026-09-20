@@ -6,7 +6,6 @@
 
 import type { ToolBinding } from "./tools/common.ts";
 import { buildPrompt, startSession } from "./session.ts";
-import { countCoverageTargetFiles } from "../node-ext/code-coverage/coverage-core.ts";
 import { monitorState } from "./monitor-state.ts";
 import { ensureWebService } from "./web.ts";
 import YAML from "yaml";
@@ -125,11 +124,12 @@ export async function runStages(wf: StagedWorkflow, ctx: WorkflowContext, opts: 
     }
   }
 
-  // 空目标护栏：include 被 exclude 吞掉时 coverage 静默全程为零（09-11 fish 问语义时定的）
+  // 空目标护栏（读 coverage 产物）：快照已存在且靶为空 → 明确告警；快照未生成则跳过（hunt 启动时会复查）
   try {
-    if (countCoverageTargetFiles(ctx.cwd, ctx.workdir) === 0)
+    const snap = JSON.parse(readFileSync(join(ctx.workdir, "system", "coverage", "code-reading-coverage.json"), "utf-8")) as { summary?: { total_lines?: number } };
+    if ((snap.summary?.total_lines ?? null) === 0)
       ctx.report("⚠ 覆盖率统计目标为空（coverage_include 被 coverage_exclude 吞掉？），coverage 将全程为零");
-  } catch { /* 自检失败无碍 */ }
+  } catch { /* 快照未生成：跳过 */ }
 
   const sctx: StageCtx = {
     ...ctx, state, save,

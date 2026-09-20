@@ -26,7 +26,6 @@ import { makeSandboxTool } from "./tools/sandbox.ts";
 import { makeHypTool } from "./tools/hyp.ts";
 import { makeFindingTool } from "./tools/finding.ts";
 import { monitorState } from "./monitor-state.ts";
-import { getCoveragePaths, loadCoverageConfig, loadCoverageMap, aggregateCoverageEvents, persistCoverageMap, recordReadCoverageEvent } from "../node-ext/code-coverage/coverage-core.ts";
 
 /** 会话上下文（与 WorkflowContext 同形，避免循环依赖） */
 export interface SessionCtx {
@@ -59,7 +58,8 @@ export interface SessionHandle {
   /** 提取当前路径成独立会话，返回新 handle（并发链用）；agent/binding 可换（会话历史与工具集正交） */
   fork(id: string, agent?: string, binding?: ToolBinding): Promise<SessionHandle>;
   /** hunt 覆盖率记录开关（init 宿主只在 hunt 轮次期间打开，口径=hunt 精读） */
-  setCoverage(on: boolean): void;
+  /** 向会话执行扩展命令（如 /coverage-record on）。命令未注册时跳过并记台账——绝不把 "/xxx" 漏给模型。 */
+  execCommand(text: string): Promise<void>;
   /** 会话内动态改 binding（如同一主干会话切 hunt 轮次时换编号 source） */
   setBinding(patch: Partial<ToolBinding>): void;
   /** 当前会话文件路径 */
@@ -194,24 +194,8 @@ export async function startSession(ctx: SessionCtx, opts: {
       }
     }
   }
-  const cov = getCoveragePaths(ctx.workdir);
-  const covCfg = loadCoverageConfig(ctx.workdir);
-  let covOn = opts.agent === "hunt";
   // 台账/血缘统一带 run 标识（fish 09-15）
   const ln = (rec: Record<string, unknown>) => lineage(ctx.workdir, ctx.runId ? { run: ctx.runId, ...rec } : rec);
-  // pi 的 tool_execution_end 事件不带 args（09-11 实踩：全程零事件），
-  // 须在 start 暂存参数、end 配对确认未出错后再记。
-  const covReads = new Map<string, unknown>();
-  sess.subscribe((ev: AgentSessionEvent) => {
-    if (!covOn) return;
-    if (ev.type === "tool_execution_start" && (ev as any).toolName === "read") {
-      covReads.set((ev as any).toolCallId, (ev as any).args);
-    } else if (ev.type === "tool_execution_end" && (ev as any).toolName === "read" && !(ev as any).isError) {
-      const a = covReads.get((ev as any).toolCallId);
-      covReads.delete((ev as any).toolCallId);
-      if (a) recordReadCoverageEvent({ jsonlPath: cov.jsonlPath, targetRoot: ctx.cwd, stage: "hunt", input: a as any, cfg: covCfg, outputDir: ctx.workdir });
-    }
-  });
 
   // 操作计数（task 区间聚合：全节点通用，fish 09-15）——pi 的 end 事件不带 args，start 暂存参数
   const ops = new OpsCounter();
@@ -229,11 +213,6 @@ export async function startSession(ctx: SessionCtx, opts: {
   // 任务序号按会话文件接续：同一会话文件跨句柄复活（stage 边界）时序号不重叠（09-15 回归实踩 init#t1×3）
   let taskSeq = 0;
   try { taskSeq = loadLedgerRows(ctx.workdir).filter((r) => r.action === "task-start" && (sessFile ? r.file === sessFile : r.id === id)).length; } catch { /* 无碍 */ }
-  const flushCoverage = () => {
-    if (!cov) return;
-    const map = loadCoverageMap(cov.jsonPath, ctx.cwd, ctx.workdir);
-    if (aggregateCoverageEvents(cov.jsonlPath, map)) persistCoverageMap(map, cov.jsonPath);
-  };
 
   const handle: SessionHandle = {
     id,
@@ -263,7 +242,6 @@ export async function startSession(ctx: SessionCtx, opts: {
           firstTry = false;
           await sess.prompt(pending);
           await sess.waitForIdle();
-          flushCoverage();
           // 任务终点 = 收尾条目（done 标之前那一叶）；起点 = 本任务链上最早的用户消息条目（fish 09-15）
           const endEntry = smP.getLeafId() ?? undefined;
           const startEntry = findTaskStart(smP, preLeaf, endEntry);
@@ -371,7 +349,14 @@ export async function startSession(ctx: SessionCtx, opts: {
       return startSession(ctx, { agent: newAgent ?? opts.agent, id: newId, binding: newBinding ?? opts.binding, sessionFile: path });
     },
 
-    setCoverage(on: boolean) { covOn = on; },
+    async execCommand(text: string) {
+      const cmdName = text.startsWith("/") ? text.slice(1).split(/\s+/)[0] : "";
+      const runner = (sess as any)._extensionRunner;
+      const cmd = cmdName ? runner?.getCommand?.(cmdName) : undefined;
+      if (!cmd) { ln({ id, action: "command-skip", command: text }); return; }
+      await sess.prompt(text);
+      ln({ id, action: "command", command: text });
+    },
 
     setBinding(patch: Partial<ToolBinding>) { Object.assign(bindingRef, patch); },
 
@@ -396,7 +381,6 @@ export async function startSession(ctx: SessionCtx, opts: {
     close() {
       if (closed) return;
       closed = true;
-      flushCoverage();
       monitorState.nodeEnd(id);
       try { (sess as any).dispose?.(); } catch { /* 无碍 */ }
     },

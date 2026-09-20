@@ -9,7 +9,6 @@ import type { Theme } from "@earendil-works/pi-coding-agent";
 import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { monitorState } from "./monitor-state.ts";
-import { loadScope, loadCoverageMap, aggregateCoverageEvents, perScopeStats, getCoveragePaths } from "../node-ext/code-coverage/coverage-core.ts";
 
 type Tab = "run" | "detail" | "coverage";
 
@@ -91,18 +90,19 @@ export function createMonitorComponent(tui: TUI, theme: Theme, workdir: string, 
   }
 
   function renderCoverage(width: number): string[] {
-    const scope = loadScope(workdir);
-    if (!scope) return ["（无 scope.yaml——mark_scope 未设置）"];
-    const cov = getCoveragePaths(workdir);
-    const map = loadCoverageMap(cov.jsonPath, join(workdir, ".."), workdir);
-    aggregateCoverageEvents(cov.jsonlPath, map);
-    const stats = perScopeStats(map, scope);
-    const lines = ["── scope 覆盖率门禁 ──"];
-    for (const s of stats) {
-      const bar = "█".repeat(Math.round(s.pct / 10)) + "░".repeat(10 - Math.round(s.pct / 10));
-      lines.push(`  ${s.pass ? "✓" : "✗"} ${s.path}  ${bar} ${s.pct.toFixed(1)}% (${s.read}/${s.total}) 阈值 ${s.threshold}%`);
-    }
-    return lines;
+    // 数据走 coverage 扩展的产物（快照 JSON）——09-20 解耦，不再直接读 coverage 内部
+    let sm: { coverage?: number; read_lines?: number; total_lines?: number; covered_files?: number; files?: number } | null = null;
+    try {
+      sm = (JSON.parse(readFileSync(join(workdir, "system", "coverage", "code-reading-coverage.json"), "utf-8")) as { summary?: typeof sm }).summary ?? null;
+    } catch { sm = null; }
+    if (!sm || !sm.total_lines) return ["（暂无覆盖率快照）"];
+    const pct = (sm.coverage ?? 0) * 100;
+    const filled = Math.max(0, Math.min(10, Math.round(pct / 10)));
+    const bar = "█".repeat(filled) + "░".repeat(10 - filled);
+    return [
+      "── 靶内已读覆盖（全局） ──",
+      `  ${bar} ${pct.toFixed(1)}%（${sm.read_lines ?? 0}/${sm.total_lines} 行，${sm.covered_files ?? 0}/${sm.files ?? 0} 文件）`,
+    ];
   }
 
   return {

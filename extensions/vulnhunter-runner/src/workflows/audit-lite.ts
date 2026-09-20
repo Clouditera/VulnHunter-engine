@@ -20,7 +20,6 @@ import { createExecutor } from "../executor/index.ts";
 import { runHypChain } from "./lib.ts";
 import { buildPrompt } from "../session.ts";
 import { monitorState } from "../monitor-state.ts";
-import { getCoveragePaths, loadCoverageMap, aggregateCoverageEvents } from "../../node-ext/code-coverage/coverage-core.ts";
 import { hypIds, readHyp, updateHyp } from "../tools/hyp.ts";
 import { readFinding } from "../tools/finding.ts";
 import { readSandboxState } from "../tools/sandbox.ts";
@@ -115,12 +114,21 @@ const liteWorkflow = defineStagedWorkflow({
         const threshold = Number(ctx.params.hunt_coverage_threshold || "90");
         const maxRounds = ctx.params.rounds ? Number(ctx.params.rounds) : Infinity;
         const d = s.state.data;
-        const cov = getCoveragePaths(ctx.workdir);
+        // 覆盖数据一律读 coverage 扩展的产物（快照 JSON）——09-20 解耦，runner 不再直接聚合事件
+        const covSnapPath = join(ctx.workdir, "system", "coverage", "code-reading-coverage.json");
         const targetCov = (): number | null => {
-          const map = loadCoverageMap(cov.jsonPath, ctx.cwd, ctx.workdir);
-          aggregateCoverageEvents(cov.jsonlPath, map);
-          return map.summary.total_lines > 0 ? map.summary.coverage : null;
+          try {
+            const snap = JSON.parse(readFileSync(covSnapPath, "utf-8")) as { summary?: { total_lines?: number; coverage?: number } };
+            const sm = snap.summary ?? {};
+            return (sm.total_lines ?? 0) > 0 ? (sm.coverage ?? 0) : null;
+          } catch { return null; }
         };
+        // 空目标护栏（读产物；09-11 教训：include 被 exclude 吞掉时 coverage 静默全程为零）
+        try {
+          const snap0 = JSON.parse(readFileSync(covSnapPath, "utf-8")) as { summary?: { total_lines?: number } };
+          if ((snap0.summary?.total_lines ?? null) === 0)
+            ctx.report("⚠ 覆盖率统计目标为空（coverage_include 被 coverage_exclude 吞掉？），coverage 将全程为零");
+        } catch { /* 快照未生成：会话启动后由扩展落盘，此处跳过 */ }
         let zeroStreak = (d.huntZeroStreak as number | undefined) ?? 0;
         let lastBig = (d.huntLastBig as number | undefined) ?? 0;   // 大轮摘要已覆盖到第几轮
         for (let r0 = ((d.huntRound as number | undefined) ?? 0) + 1; r0 <= maxRounds; r0++) {
@@ -133,7 +141,7 @@ const liteWorkflow = defineStagedWorkflow({
           const freshRestart = fresh && r0 > 1;
           if (freshRestart) await s0.goto("init");
           s0.setBinding({ tag: rn });
-          s0.setCoverage(true);
+          await s0.execCommand("/coverage-record on");   // 记录开关（coverage 扩展自理；09-20 解耦）
           const before = new Set(hypIds(ctx.workdir));
           // fresh 重开轮不打 start 标：goto 后叶子正是 init 锚点条目，pi 单条目单标签，
           // 此时打标会覆盖锚点标签，下一轮 goto("init") 必死（09-11 mem-b hunt3 实踩）
@@ -175,7 +183,7 @@ const liteWorkflow = defineStagedWorkflow({
         const sigmaEnd = fresh ? [] : [...(lastBig ? [`Σhunt1-${lastBig}`] : []),
           ...Array.from({ length: ((d.huntRound as number | undefined) ?? 0) - lastBig }, (_, i) => `Σhunt${lastBig + i + 1}`)];
         s0.mark(`hunt-end[init${sigmaEnd.length ? "," + sigmaEnd.join(",") : ""}][+${hypIds(ctx.workdir).length}HYP]`);
-        s0.setCoverage(false);
+        await s0.execCommand("/coverage-record off");   // 关闭记录并落盘（09-20 解耦）
         }, { tag: "hunt" });
       } finally { s0.close(); }
     } });
