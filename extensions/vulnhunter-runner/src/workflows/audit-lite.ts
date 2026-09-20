@@ -187,7 +187,7 @@ const liteWorkflow = defineStagedWorkflow({
         const roundHyps = (s.state.data.roundHyps ?? {}) as Record<string, string[]>;
         const roundSigma = (s.state.data.roundSigma ?? {}) as Record<string, string[]>;
         // 电选（chain_filter 每轮前 K 条；已办结/已产出 finding 跳过，单步重试幂等）
-        const elected: Array<{ id: string; rn: string; ing: string }> = [];
+        const elected: Array<{ id: string; fork: string; ing: string }> = [];
         for (const [rn, files] of Object.entries(roundHyps)) {
           const r0 = Number(rn.replace("hunt", ""));
           const sig = roundSigma[rn] ?? [];
@@ -198,7 +198,7 @@ const liteWorkflow = defineStagedWorkflow({
             if (!rec) { ctx.report(`电选跳过（HYP 记录缺失）：${id}`); continue; }
             if (rec.status === "closed" || rec.conclusion === "refuted") continue;   // 已办结（含 refuted）
             if (readFinding(ctx.workdir, id.replace(/^HYP-/, "BUG-"))) continue;     // 已产出 finding（confirmed）
-            elected.push({ id, rn, ing });
+            elected.push({ id, fork: `${rn}-done`, ing });
           }
         }
         // research（及非轮次来源）的 HYP：出生点是 research-done，同样进研判（fish 09-20：research 可调用 hyp）
@@ -209,7 +209,8 @@ const liteWorkflow = defineStagedWorkflow({
           if (rec.status === "closed" || rec.conclusion === "refuted") continue;
           if (readFinding(ctx.workdir, id.replace(/^HYP-/, "BUG-"))) continue;
           if (elected.some((e2) => e2.id === id)) continue;
-          elected.push({ id, rn: "research", ing: "Σ(on,bu,re)" });
+          // fork 自 hunt-end（压缩后的安全点；research-done 在压缩区间内，fork 会丢 Σ(init) 摘要——replay 实踩）
+          elected.push({ id, fork: "hunt-end", ing: "Σ(init)" });
         }
         // 动态门槛可见性（fail-closed 收口）：沙箱状态未知时明确告警，不静默（09-17 ev 静默缺陷教训）
         if (ctx.params.sandbox_cfg && readSandboxState(ctx.workdir).status === "unknown") {
@@ -222,7 +223,7 @@ const liteWorkflow = defineStagedWorkflow({
           for (let attempt = 1; attempt <= 3; attempt++) {
             try {
               await verifyPool.submit(
-                () => runHypChain(ctx, init, meta.id, { forkPoint: `${meta.rn}-done`, birthIngredients: meta.ing, sandboxPool }),
+                () => runHypChain(ctx, init, meta.id, { forkPoint: meta.fork, birthIngredients: meta.ing, sandboxPool }),
                 { tag: `${meta.id}#a${attempt}` },
               );
               done++;
