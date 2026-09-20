@@ -15,7 +15,7 @@ import {
   createAgentSession, DefaultResourceLoader, SettingsManager, SessionManager, parseFrontmatter,
   type AgentSession, type AgentSessionEvent, type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { NODES, type NodeSpec } from "./nodes.ts";
 import { lineage, OpsCounter, tasksCovering, loadLedgerRows } from "./ledger.ts";
@@ -346,11 +346,27 @@ export async function startSession(ctx: SessionCtx, opts: {
       const sm2 = (sess as any).sessionManager as SessionManager;
       const leaf = sm2.getLeafId();
       if (!leaf) throw new Error("fork 失败：会话无叶子节点");
+      // 叶子上溯：总结/打标会把叶子留在 label 条目上，直接以此为分叉点会得到空分支（09-20 实踩：hunt-end）
+      let forkLeaf = leaf;
+      {
+        const byId = new Map(sm2.getEntries().map((e) => [e.id, e as { id: string; type?: string; parentId?: string | null }]));
+        let g = 0;
+        while (g++ < 1000) {
+          const e = byId.get(forkLeaf);
+          if (!e || e.type !== "label") break;
+          forkLeaf = e.parentId ?? "";
+        }
+        if (!forkLeaf) throw new Error("fork 失败：叶子上溯未找到内容条目");
+      }
       const srcFile = sm2.getSessionFile?.();
       if (!srcFile) throw new Error("fork 失败：会话未持久化");
       const tmp = SessionManager.open(srcFile);
-      const path = tmp.createBranchedSession(leaf);
+      const path = tmp.createBranchedSession(forkLeaf);
       if (!path) throw new Error("fork 失败：createBranchedSession 未返回路径");
+      // pi 的 createBranchedSession 在分支无 assistant 消息时不落盘（延迟到 _persist，留给同实例续写）；
+      // 我们按路径新开会话（不同实例），需显式落盘——否则分支内容丢失得到空链（09-20 实踩：hunt-end fork）
+      if (!existsSync(path)) (tmp as any)._rewriteFile?.();
+      if (!existsSync(path)) throw new Error("fork 失败：分支文件未生成");
       ln({ id, action: "fork", child: newId, childAgent: newAgent ?? opts.agent, file: path });
       return startSession(ctx, { agent: newAgent ?? opts.agent, id: newId, binding: newBinding ?? opts.binding, sessionFile: path });
     },
