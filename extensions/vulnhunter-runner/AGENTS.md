@@ -28,6 +28,7 @@
 - 沙箱工具链不满足时在沙箱内补齐；仍不满足的，把 blocked 与原因记入 `knowledge/env/`，不回落本地。
 - 动态操作前先确认沙箱可达（短重试不超过 3 次）；确认不可达时用 `sandbox({op:"report", status:"unavailable", note:"原因"})` 回报，当前任务如实收尾，不再重试。
 - 沙箱可用性由 `sandbox` 工具的 report 记录（system/sandbox.json，工具独占；读侧缺省 unknown，调度侧据此阻断动态环节）。运行中平时不写它——build 首测、动态链探到不可达时才有回报义务。
+- **长驻服务/长命令的命令卫生**：沙箱内启动 daemon 必须彻底脱离 stdio，否则 ssh 会话会被其挂住永不返回（09-20 实踩：nginx 启动后 ssh 挂 20 分钟）。固定写法：`ssh host 'setsid nohup <cmd> >/tmp/x.log 2>&1 </dev/null &'`；可能阻塞的命令一律加 `timeout <秒>` 包裹。
 
 # 审计方法
 
