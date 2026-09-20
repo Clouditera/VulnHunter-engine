@@ -123,6 +123,8 @@ const liteWorkflow = defineStagedWorkflow({
             return (sm.total_lines ?? 0) > 0 ? (sm.coverage ?? 0) : null;
           } catch { return null; }
         };
+        // 初始快照：先发 on（扩展强制枚举落盘；无头流 session_start 不触发，09-20 实测）——护栏与监视的数据源
+        await s0.execCommand("/coverage-record on");
         // 空目标护栏（读产物；09-11 教训：include 被 exclude 吞掉时 coverage 静默全程为零）
         try {
           const snap0 = JSON.parse(readFileSync(covSnapPath, "utf-8")) as { summary?: { total_lines?: number } };

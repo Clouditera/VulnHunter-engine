@@ -41,11 +41,13 @@ export default function (pi: ExtensionAPI) {
   const pendingReads = new Map<string, unknown>();
   let flushTimer: ReturnType<typeof setTimeout> | undefined;
 
-  const flushNow = (r: CovPaths) => {
+  const flushNow = (r: CovPaths, force = false) => {
     if (flushTimer) { clearTimeout(flushTimer); flushTimer = undefined; }
     try {
       const map = loadCoverageMap(r.jsonPath, r.targetRoot, r.outputDir);
-      if (aggregateCoverageEvents(r.jsonlPath, map)) persistCoverageMap(map, r.jsonPath);
+      const changed = aggregateCoverageEvents(r.jsonlPath, map);
+      // force：无新事件也写（会话启动/关闭时落初始快照——空目标护栏与监控立即可读）
+      if (changed || force) persistCoverageMap(map, r.jsonPath);
     } catch { /* 记录失败不阻塞会话 */ }
   };
   const scheduleFlush = (r: CovPaths) => {
@@ -74,9 +76,10 @@ export default function (pi: ExtensionAPI) {
     } catch { /* 记录失败不阻塞会话 */ }
   });
 
-  // 会话启动：枚举靶文件并落初始快照（空目标护栏与监控立即可读；尚无记录也写）
+  // 会话启动兜底：bindExtensions 只在交互/print/rpc 模式触发（无头 createAgentSession 不发 session_start，09-20 实测），
+  // 常规初始快照由 /coverage-record on 的强制落盘负责；此钩子为其他载入场景留位。
   pi.on("session_start", (_ev, ctx) => {
-    try { flushNow(resolve(ctx.cwd)); } catch { /* 无碍 */ }
+    try { flushNow(resolve(ctx.cwd), true); } catch { /* 无碍 */ }
   });
 
   // 控制命令：runner 在 hunt 起/止时调用；人也可手动用
@@ -86,8 +89,8 @@ export default function (pi: ExtensionAPI) {
       const a = String(args ?? "").trim();
       const r = resolve(ctx.cwd);
       const notify = (m: string) => { try { ctx.ui?.notify?.(m); } catch { /* headless 无 UI */ } };
-      if (a === "on") { recording = true; notify("coverage 记录：已开启"); return; }
-      if (a === "off") { recording = false; flushNow(r); notify("coverage 记录：已关闭并落盘"); return; }
+      if (a === "on") { recording = true; flushNow(r, true); notify("coverage 记录：已开启（初始快照已落）"); return; }
+      if (a === "off") { recording = false; flushNow(r, true); notify("coverage 记录：已关闭并落盘"); return; }
       if (a === "status") {
         let pct = "无快照";
         try {
