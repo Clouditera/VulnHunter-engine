@@ -4,7 +4,7 @@
  *
  * 设计约束：
  * - 外层助手只做启动与解读，不做中途干预（fish 09-11）；
- * - 状态唯一事实源 = 磁盘（workdir/runs/<runId>.json + findings/），工具只是读它；
+ * - 状态唯一事实源 = 磁盘（workdir/system/runs/<runId>.json + findings/）；工具只是读它；
  * - 错误一律教学式返回（外层助手是 LLM，看得懂就能自救）。
  *
  * 另注册：mark_scope（覆盖率门禁基准，旧 workflow 用）、F9 监控台。
@@ -17,6 +17,7 @@ import { readdirSync, writeFileSync, mkdirSync, existsSync, statSync, readFileSy
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { Workflow, WorkflowContext } from "./src/runtime.ts";
+import { listFindings } from "./src/tools/finding.ts";
 import { createMonitorComponent } from "./src/monitor.ts";
 import { ensureWebService } from "./src/web.ts";
 
@@ -37,7 +38,7 @@ const WF_DOC = `\
 常用 params：vuln_focus（漏洞关注方向，建议给）、coverage_include / coverage_exclude（审计范围/覆盖率口径，缺省全项目；支持 *.ext 通配）、sandbox_cfg（沙箱 ssh 配置，给了就走 dynamic-verify 含沙箱复现，不给就是纯静态 static-verify）、rounds / chain_filter（试验与限成本用，一般不用给）。`;
 
 function readRuns(workdir: string): Array<{ runId: string; workflow: string; stages: Record<string, string> }> {
-  const dir = join(workdir, "runs");
+  const dir = join(workdir, "system", "runs");
   if (!existsSync(dir)) return [];
   const out = [];
   for (const f of readdirSync(dir).filter((f) => f.endsWith(".json"))) {
@@ -50,16 +51,9 @@ function readRuns(workdir: string): Array<{ runId: string; workflow: string; sta
 }
 
 function renderFindings(workdir: string): string {
-  const dir = join(workdir, "findings");
-  if (!existsSync(dir)) return "（无 findings）";
-  const rows: string[] = [];
-  for (const d of readdirSync(dir).sort()) {
-    const rp = join(dir, d, "report.yaml");
-    if (!existsSync(rp)) continue;
-    const t = readFileSync(rp, "utf-8");
-    const g = (k: string) => t.match(new RegExp(`${k}:\\s*([^\\n]+)`))?.[1]?.trim() ?? "?";
-    rows.push(`${d}  [${g("finding_class")}] CVSS ${g("cvss_score")} / EV ${g("ev_score")} ${g("ev_priority")}  ${g("title").slice(0, 60)}`);
-  }
+  const rows = listFindings(workdir).map((r) =>
+    `${r.id}  [${r.finding_class} | ${r.ev_priority}]  CVSS ${r.cvss_score} / EV ${r.ev_score}  poc=${r.poc_status} exp=${r.exp_status}  ${r.title.slice(0, 60)}`
+  );
   return rows.length ? rows.join("\n") : "（无 findings）";
 }
 
@@ -129,7 +123,7 @@ export default function (pi: ExtensionAPI) {
         if (args.op === "resume") {
           const runs = readRuns(workdir).filter((r) => r.workflow === name);
           const last = runs[runs.length - 1];
-          if (!last) bad(`没找到 ${name} 的历史 run（workdir/runs/ 为空），无法续跑——请用 op=run 全新启动`);
+          if (!last) bad(`没找到 ${name} 的历史 run（workdir/system/runs/ 为空），无法续跑——请用 op=run 全新启动`);
           const failed = Object.entries(last.stages).find(([, v]) => v === "failed")?.[0];
           runOpts = { runId: last.runId, from: args.from ?? failed };
           if (!runOpts.from) bad(`上次 run（runId=${last.runId}）没有 failed 阶段（阶段状态：${Object.entries(last.stages).map(([k, v]) => k + ":" + v).join(" ")}）。要重跑某阶段请显式给 from`);

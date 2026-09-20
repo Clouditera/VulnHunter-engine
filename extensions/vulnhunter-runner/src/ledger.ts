@@ -1,18 +1,22 @@
 /**
  * 会话台账（fish 09-15 定稿）：任务层 + 折叠层记录，并入 lineage 旁路。
  *
- * - 与 mark/goto/fork 等血缘同写 `<workdir>/sessions-lineage.jsonl`（一条时间线、按会话 id + 文件键控）；
+ * - 与 mark/goto/fork 等血缘同写 `<workdir>/system/sessions-lineage.jsonl`（一条时间线、按会话 id + 文件键控）；
  * - task = 一次 prompt 的完整生命周期（start/end 条目、时长、状态、attempt、操作计数）；
  * - fold = task summary（唯一折叠操作）——摘要条目、覆盖区间 [起,止]、成员任务；
  * - 追加制；coveredBy 是派生字段（消费端从 fold.members 反推），本模块不改写历史记录。
  */
 
-import { appendFileSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 /** 血缘/台账单行追加（失败无碍） */
 export function lineage(workdir: string, rec: Record<string, unknown>): void {
-  try { appendFileSync(join(workdir, "sessions-lineage.jsonl"), JSON.stringify({ ts: new Date().toISOString(), ...rec }) + "\n"); } catch { /* 记录失败无碍主流程 */ }
+  try {
+    const dir = join(workdir, "system");
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    appendFileSync(join(dir, "sessions-lineage.jsonl"), JSON.stringify({ ts: new Date().toISOString(), ...rec }) + "\n");
+  } catch { /* 记录失败无碍主流程 */ }
 }
 
 // ---------------------------------------------------------------------------
@@ -50,9 +54,10 @@ export class OpsCounter {
     this.byTool[toolName] = (this.byTool[toolName] ?? 0) + 1;
     if (toolName === "read") this.reads++;
     if (isError) this.errors++;
-    if (toolName === "artifact" && !isError && st?.args?.op === "create") {
-      const m = /编号\s+([A-Za-z0-9_·:.\-]+)/.exec(resultText ?? "");
-      this.artifacts.push(m?.[1] ?? String(st.args.type ?? "artifact"));
+    // create 产出的产物编号（hyp / finding；从工具返回文本里取）
+    if ((toolName === "hyp" || toolName === "finding") && !isError && st?.args?.op === "create") {
+      const m = /\b((?:HYP|BUG)-[A-Za-z0-9_\-:.]+)\b/.exec(resultText ?? "");
+      if (m) this.artifacts.push(m[1]);
     }
   }
 
@@ -78,7 +83,7 @@ interface LedgerRow { action?: string; id?: string; file?: string; [k: string]: 
 
 export function loadLedgerRows(workdir: string): LedgerRow[] {
   try {
-    return readFileSync(join(workdir, "sessions-lineage.jsonl"), "utf-8")
+    return readFileSync(join(workdir, "system", "sessions-lineage.jsonl"), "utf-8")
       .split("\n").filter(Boolean)
       .map((l) => { try { return JSON.parse(l) as LedgerRow; } catch { return null; } })
       .filter((x): x is LedgerRow => !!x);

@@ -105,7 +105,7 @@ function buildState() {
       queued: p.waiting, dispatched: p.completed + p.failed + p.running.length, finished: p.completed,
       active: p.running.map((r) => ({ label: r.tag, ms: now - r.since })),
     })) : [],
-    queues: ex ? ex.queues : [],
+    queues: [],
     running: [...monitorState.running.values()].map((n) => ({
       id: n.id, agent: n.agent, target: n.target, ms: now - n.startTs,
       sessionFile: n.sessionFile, workdir: n.workdir, cwd: n.cwd,
@@ -117,15 +117,15 @@ function buildState() {
 
 function buildRun(workdir: string, runId: string) {
   if (!workdir || !runId) return { error: "缺 workdir/runId" };
-  const statePath = join(workdir, "runs", `audit-lite-${runId}.json`);
+  const statePath = join(workdir, "system", "runs", `audit-lite-${runId}.json`);
   const out: Record<string, unknown> = { workdir, runId };
   try { out.state = JSON.parse(readFileSync(statePath, "utf-8")); }
   catch { out.state = null; }
   try {
-    const lines = readFileSync(join(workdir, "sessions-lineage.jsonl"), "utf-8").trim().split("\n");
+    const lines = readFileSync(join(workdir, "system", "sessions-lineage.jsonl"), "utf-8").trim().split("\n");
     out.lineage = lines.slice(-120).map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
   } catch { out.lineage = []; }
-  try { out.leads = readdirSyncSafe(join(workdir, "leads")); } catch { out.leads = []; }
+  try { out.hyps = readdirSyncSafe(join(workdir, "system", "hyp")); } catch { out.hyps = []; }
   try { out.findings = readdirSyncSafe(join(workdir, "findings")); } catch { out.findings = []; }
   try {
     const cov = JSON.parse(readFileSync(join(workdir, "knowledge", "coverage", "code-reading-coverage.json"), "utf-8"));
@@ -147,7 +147,7 @@ function apiSessionState(file: string, workdir: string) {
 
 // ---------------------------------------------------------------------------
 // 阶段详情（09-14 fish「工厂模式」：点阶段卡看一台机器的投入/产出/加工）
-// 物料模型（执行器 FileQueue 后端）：leads（待消费库存）→ todo（claim 即移=加工中）→ done（办结/裁决）；
+// 物料模型（system/hyp 状态）：pending（待判库存）→ running（在判）→ closed（办结/裁决）；
 // knowledge/ 是共享货架只增不消耗；findings/BUG-* 是成品。
 // ---------------------------------------------------------------------------
 
@@ -156,7 +156,7 @@ interface LineageEntry { ts?: string; id?: string; action?: string; agent?: stri
 function buildStageDetail(workdir: string, runId: string, stage: string) {
   if (!workdir || !runId || !stage) return { error: "缺 workdir/runId/stage" };
   let state: Record<string, any> | null = null;
-  try { state = JSON.parse(readFileSync(join(workdir, "runs", `audit-lite-${runId}.json`), "utf-8")); } catch { /* 无 run-state */ }
+  try { state = JSON.parse(readFileSync(join(workdir, "system", "runs", `audit-lite-${runId}.json`), "utf-8")); } catch { /* 无 run-state */ }
   const t = state?.data?.stageTimes?.[stage] ?? null;
   const start = t?.start ? Date.parse(t.start) : null;
   const end = start != null ? (t?.ms != null ? start + t.ms : Date.now()) : null;
@@ -165,7 +165,7 @@ function buildStageDetail(workdir: string, runId: string, stage: string) {
   // 归后一阶段（chains fork 不会漏进 hunt 窗；designer 09-14 实捕 ±2s 缓冲越界）
   let lineage: LineageEntry[] = [];
   try {
-    lineage = readFileSync(join(workdir, "sessions-lineage.jsonl"), "utf-8").trim().split("\n")
+    lineage = readFileSync(join(workdir, "system", "sessions-lineage.jsonl"), "utf-8").trim().split("\n")
       .map((l) => { try { return JSON.parse(l) as LineageEntry; } catch { return null; } })
       .filter((e): e is LineageEntry => !!e)
       .filter((e) => {
@@ -175,21 +175,28 @@ function buildStageDetail(workdir: string, runId: string, stage: string) {
       });
   } catch { /* 无 lineage */ }
 
-  // 队列快照（当前盘面；历史时刻深度只能从 lineage 推，不猜）
+  // 物料快照（system/hyp 状态驱动；历史时刻深度只能从 lineage 推，不猜）
   const ls = (d: string, re?: RegExp) => readdirSyncSafe(join(workdir, d)).filter((f) => !re || re.test(f));
+  const hypByStatus = (st: string) => {
+    const dir = join(workdir, "system", "hyp");
+    return readdirSyncSafe(dir)
+      .filter((f) => f.startsWith("HYP-") && f.endsWith(".json"))
+      .filter((f) => { try { return (JSON.parse(readFileSync(join(dir, f), "utf-8")) as { status?: string }).status === st; } catch { return false; } })
+      .map((f) => f.replace(/\.json$/, ""));
+  };
   const queues = {
-    stockHyp: ls("leads", /^HYP-.+\.md$/),      // 未派发库存（可能含异常退回的重派件）
-    inflightHyp: ls("todo", /^HYP-.+\.md$/),   // 已派发=池内排队+加工中
-    archivedHyp: ls("done", /^HYP-.+\.md$/),   // 已裁决归档
-    adv: ls("leads", /^ADV-.+\.md$/),
-    leads: ls("leads", /^LEAD-.+\.md$/),
+    stockHyp: hypByStatus("pending"),      // 待判库存
+    inflightHyp: hypByStatus("running"),   // 在判
+    archivedHyp: hypByStatus("closed"),    // 办结
+    adv: [],
+    leads: [],
     findings: ls("findings", /^BUG-/),
   };
 
   // 货架（knowledge/ 共享知识）
   const knowledge = {
-    profiler: existsSync(join(workdir, "knowledge", "profiler.yaml")),
-    build: readdirSyncSafe(join(workdir, "knowledge", "build")),
+    profiler: existsSync(join(workdir, "system", "profiler.json")),
+    env: readdirSyncSafe(join(workdir, "knowledge", "env")),
     research: readdirSyncSafe(join(workdir, "knowledge", "research")),
     wiki: readdirSyncSafe(join(workdir, "knowledge", "wiki")),
     coverageMap: existsSync(join(workdir, "knowledge", "coverage", "code-reading-coverage.json")),

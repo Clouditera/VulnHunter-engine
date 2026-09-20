@@ -11,13 +11,12 @@
  *   ② 释放保证：成功/失败/中止一律释放（finally 语义）；
  *   ③ 等待关系严格单向嵌套（资源 ⊂ 池任务 ⊂ 容量），无环 → 任意 N≥1 都不卡死。
  *
- * 与业务/会话无耦合：本模块不认识"会话、提示词、漏洞"，只认识 容量/池/任务/队列。
+ * 与业务/会话无耦合：本模块不认识"会话、提示词、漏洞"，只认识 容量/池/任务（队列子系统已随旧物料模型退役，fish 09-20）。
  */
 
 import { AsyncLocalStorage } from "node:async_hooks";
 import { CapacityPool, type Permit } from "./capacity.ts";
 import { Pool } from "./pool.ts";
-import { MemoryQueue } from "./queue.ts";
 import { Registry } from "./registry.ts";
 import type {
   AcquireOptions,
@@ -27,16 +26,11 @@ import type {
   PoolOptions,
   PoolStats,
   Priority,
-  QueueBackend,
-  QueueStats,
-  ServeOptions,
   Stats,
   SubmitOptions,
 } from "./types.ts";
 
-export type { QueueItem, QueueBackend, ServeOptions, SubmitOptions, AcquireOptions, CapacityOptions, PoolOptions, ExecEvent, Stats } from "./types.ts";
-export { MemoryQueue } from "./queue.ts";
-export { FileQueue, type FileQueueOptions } from "./file-queue.ts";
+export type { SubmitOptions, AcquireOptions, CapacityOptions, PoolOptions, ExecEvent, Stats } from "./types.ts";
 export { CapacityPool } from "./capacity.ts";
 export { Pool } from "./pool.ts";
 
@@ -54,22 +48,13 @@ export interface PoolHandle {
   setConcurrency(n: number): void;
 }
 
-export interface QueueHandle<T = unknown> {
-  readonly name: string;
-  readonly backend: QueueBackend<T>;
-}
-
 export interface Executor {
   /** 绑定/调整容量（外部供给；模型凭证能力、沙箱机位数……） */
   bindCapacity(name: string, opts: CapacityOptions): void;
   /** 声明池（需求组织；同名幂等返回已有句柄） */
   declarePool(name: string, opts: PoolOptions): PoolHandle;
-  /** 声明队列（缺省内存后端） */
-  declareQueue<T = unknown>(name: string, opts?: { backend?: QueueBackend<T> }): QueueHandle<T>;
   /** 嵌套加需：只取"当前任务未持有"的容量，跑完只放新增（已持继承不重入） */
   acquire<T>(reqs: Record<string, number>, fn: (signal: AbortSignal) => Promise<T>, opts?: AcquireOptions): Promise<T>;
-  /** 队列驱动：泵自动 claim → submit → ack/requeue，抽干为止 */
-  serve<T = unknown>(opts: ServeOptions<T>): Promise<void>;
   stats(): Stats;
   events(): ExecEvent[];
   on(fn: (e: ExecEvent) => void): () => void;
@@ -117,7 +102,6 @@ function runWithTimeout<T>(
 class ExecutorImpl implements Executor {
   private capacities = new Map<string, CapacityPool>();
   private pools = new Map<string, Pool>();
-  private queues = new Map<string, QueueBackend<unknown>>();
   private registry = new Registry();
   private holds = new AsyncLocalStorage<Map<string, number>>();
   private seq = 0;
@@ -148,15 +132,6 @@ class ExecutorImpl implements Executor {
     };
   }
 
-  declareQueue<T>(name: string, opts?: { backend?: QueueBackend<T> }): QueueHandle<T> {
-    let backend = this.queues.get(name) as QueueBackend<T> | undefined;
-    if (!backend) {
-      backend = opts?.backend ?? (new MemoryQueue<T>() as QueueBackend<T>);
-      this.queues.set(name, backend as QueueBackend<unknown>);
-    }
-    return { name, backend };
-  }
-
   async acquire<T>(reqs: Record<string, number>, fn: (signal: AbortSignal) => Promise<T>, opts: AcquireOptions = {}): Promise<T> {
     const tag = opts.tag ?? this.nextTag();
     const prep = await this.prepare(new Map(Object.entries(reqs)), tag, opts.priority ?? 50, opts.signal);
@@ -164,40 +139,6 @@ class ExecutorImpl implements Executor {
       return await this.holds.run(prep.held, () => runWithTimeout(fn, opts.timeoutMs, opts.signal));
     } finally {
       prep.release();
-    }
-  }
-
-  async serve<T>(opts: ServeOptions<T>): Promise<void> {
-    const queue = this.queues.get(opts.queue);
-    if (!queue) throw new Error(`未声明队列：${opts.queue}`);
-    const pool = this.pools.get(opts.pool);
-    if (!pool) throw new Error(`未声明池：${opts.pool}`);
-    const pumps = Math.max(1, opts.pumps ?? pool.concurrency);
-    const workers: Array<Promise<void>> = [];
-    for (let i = 0; i < pumps; i++) workers.push(this.pumpLoop(queue as QueueBackend<T>, opts));
-    await Promise.all(workers);
-  }
-
-  private async pumpLoop<T>(queue: QueueBackend<T>, opts: ServeOptions<T>): Promise<void> {
-    for (;;) {
-      const item = queue.claim();
-      if (!item) return;
-      this.registry.emit({ ts: Date.now(), type: "queue.claim", queue: opts.queue, id: item.id, attempts: item.attempts });
-      try {
-        const result = await this.submitVia(this.pools.get(opts.pool)!, (signal) => opts.consumer(item, signal), { tag: item.id });
-        queue.ack(item, result);
-        this.registry.emit({ ts: Date.now(), type: "queue.ack", queue: opts.queue, id: item.id });
-      } catch (e) {
-        let drop = false;
-        try { drop = (await opts.onError?.(item, e)) === "drop"; } catch { /* 回调失败不改变处置 */ }
-        if (drop) {
-          queue.ack(item, { failed: true });
-          this.registry.emit({ ts: Date.now(), type: "queue.drop", queue: opts.queue, id: item.id });
-        } else {
-          queue.requeue(item);
-          this.registry.emit({ ts: Date.now(), type: "queue.requeue", queue: opts.queue, id: item.id, attempts: item.attempts });
-        }
-      }
     }
   }
 
@@ -267,10 +208,7 @@ class ExecutorImpl implements Executor {
       name: p.name, concurrency: p.concurrency, locked: p.locked, priority: p.priority,
       running: p.runningList, waiting: p.waitingCount, completed: p.completed, failed: p.failed,
     }));
-    const queues: QueueStats[] = [...this.queues.entries()].map(([name, q]) => ({
-      name, size: q.size(), inflight: q.inflight(),
-    }));
-    return { capacities, pools, queues };
+    return { capacities, pools };
   }
 
   events(): ExecEvent[] { return this.registry.list(); }

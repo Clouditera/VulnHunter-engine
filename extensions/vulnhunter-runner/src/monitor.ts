@@ -59,12 +59,19 @@ export function createMonitorComponent(tui: TUI, theme: Theme, workdir: string, 
       const mark = i === selected ? "▶" : " ";
       lines.push(` ${mark} ${n.agent}${n.target ? ` · ${n.target}` : ""} · ${fmtDur(Date.now() - n.startTs)}`);
     });
-    lines.push("", "── 队列 ──");
-    for (const [label, d] of [["待消费 leads", "leads"], ["消费中 todo", "todo"], ["归档 done", "done"]] as const) {
-      const p = join(workdir, d);
-      const n = existsSync(p) ? readdirSync(p).filter((f) => f.endsWith(".md")).length : 0;
-      lines.push(`  ${label}: ${n}`);
-    }
+    lines.push("", "── 物料（system/hyp + findings）──");
+    const counts: Record<string, number> = { pending: 0, running: 0, closed: 0 };
+    try {
+      for (const f of readdirSync(join(workdir, "system", "hyp"))) {
+        try {
+          const r = JSON.parse(readFileSync(join(workdir, "system", "hyp", f), "utf-8")) as { status?: string };
+          if (r.status && r.status in counts) counts[r.status]++;
+        } catch { /* 跳过损坏文件 */ }
+      }
+    } catch { /* 无 hyp 目录 */ }
+    let findingsN = 0;
+    try { findingsN = readdirSync(join(workdir, "findings")).filter((f) => f.startsWith("BUG-")).length; } catch { /* 无 findings */ }
+    lines.push(`  待判 pending: ${counts.pending}`, `  在判 running: ${counts.running}`, `  办结 closed: ${counts.closed}`, `  已产出 finding: ${findingsN}`);
     lines.push("", "── 最近事件 ──");
     for (const e of monitorState.events.slice(-8)) lines.push(`  [${fmtTime(e.ts)}] ${e.msg}`.slice(0, width - 4));
     return lines;

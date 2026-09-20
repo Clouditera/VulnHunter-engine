@@ -4,7 +4,7 @@
  * 这里保留 runNode 一次性会话薄壳与 WorkflowContext/defineWorkflow，兼容 audit.ts。
  */
 
-import type { FnBinding } from "./workspace-tools.ts";
+import type { ToolBinding } from "./tools/common.ts";
 import { buildPrompt, startSession } from "./session.ts";
 import { countCoverageTargetFiles } from "../node-ext/code-coverage/coverage-core.ts";
 import { monitorState } from "./monitor-state.ts";
@@ -16,8 +16,8 @@ export interface NodeOptions {
   task: string;
   /** 附加行（如 todo 路径："审计链路：todo/ADV-C1-A2.md"） */
   extra?: string;
-  /** 编号绑定上下文（hunt→advId / 链→hypId / research→runNo） */
-  binding?: FnBinding;
+  /** 编号绑定上下文（hunt→tag:huntN / 链→hypId / research→tag） */
+  binding?: ToolBinding;
   /** 覆盖默认超时 */
   timeoutMs?: number;
 }
@@ -94,13 +94,13 @@ export interface StageCtx extends WorkflowContext {
   state: RunState;
   save(): void;
   /** 按角色开/复活会话（有文件则复活，否则新建并登记） */
-  openSession(role: string, agent: string, opts?: { binding?: FnBinding; fresh?: boolean }): Promise<import("./session.ts").SessionHandle>;
+  openSession(role: string, agent: string, opts?: { binding?: ToolBinding; fresh?: boolean }): Promise<import("./session.ts").SessionHandle>;
 }
 
 /** 跑阶段化 workflow；from=断点续跑，only=单步重试 */
 export async function runStages(wf: StagedWorkflow, ctx: WorkflowContext, opts: { runId?: string; from?: string; only?: string } = {}): Promise<void> {
   const runId = opts.runId ?? `${Date.now()}`;
-  const runsDir = join(ctx.workdir, "runs");
+  const runsDir = join(ctx.workdir, "system", "runs");
   mkdirSync(runsDir, { recursive: true });
   const statePath = join(runsDir, `${wf.name}-${runId}.json`);
 

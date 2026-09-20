@@ -45,39 +45,6 @@ export interface AcquireOptions {
   signal?: AbortSignal;
 }
 
-export interface QueueItem<T = unknown> {
-  /** 件身份（文件后端=文件名） */
-  id: string;
-  payload: T;
-  /** 已尝试次数（≥1；重派后递增） */
-  attempts: number;
-}
-
-export interface QueueBackend<T = unknown> {
-  /** 取一件（同步）；空返回 null */
-  claim(): QueueItem<T> | null;
-  /** 成功归档 */
-  ack(item: QueueItem<T>, result?: unknown): void;
-  /** 失败退回（可重派） */
-  requeue(item: QueueItem<T>): void;
-  /** 待处理件数 */
-  size(): number;
-  /** 在途件数 */
-  inflight(): number;
-  /** 崩溃恢复（可选）：在途退回待处理 */
-  recover?(): void;
-}
-
-export interface ServeOptions<T = unknown> {
-  queue: string;
-  pool: string;
-  consumer: (item: QueueItem<T>, signal: AbortSignal) => Promise<unknown>;
-  /** 失败回调；返回 "drop" 则归档为失败不再重派（缺省：退回队列） */
-  onError?: (item: QueueItem<T>, error: unknown) => "drop" | void | Promise<"drop" | void>;
-  /** 泵数（缺省=池并发上限） */
-  pumps?: number;
-}
-
 export interface ExecEvent {
   ts: number;
   type: string;
@@ -102,14 +69,7 @@ export interface PoolStats {
   failed: number;
 }
 
-export interface QueueStats {
-  name: string;
-  size: number;
-  inflight: number;
-}
-
 export interface Stats {
   capacities: CapacityStats[];
   pools: PoolStats[];
-  queues: QueueStats[];
 }

@@ -2,10 +2,7 @@
  * 执行器验收用例（fish 09-15 五条 + 附加）
  * 运行：node tests/executor.spec.mjs（先构建 .dist）
  */
-import { mkdtempSync, writeFileSync, readdirSync, renameSync, mkdirSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { createExecutor, MemoryQueue, FileQueue, TaskTimeoutError } from "../.dist/src/executor/index.js";
+import { createExecutor, TaskTimeoutError } from "../.dist/src/executor/index.js";
 
 let pass = 0, fail = 0;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -73,31 +70,6 @@ await t("C. 嵌套继承（model=1 沙箱嵌套不重入，不卡死）", async 
   assert(s2.capacities.every((c) => c.held.length === 0), "结束后全部释放");
 });
 
-// ④ 队列驱动：serve 抽干 + 失败重派（attempts 递增）
-await t("D. serve 队列驱动（claim/ack/requeue，失败重派后成功）", async () => {
-  const ex = createExecutor();
-  const q = new MemoryQueue(["a", "failme", "b", "failme2", "c"]);
-  ex.declareQueue("items", { backend: q });
-  ex.declarePool("worker", { concurrency: 2 });
-
-  const done = [], errors = [];
-  await ex.serve({
-    queue: "items", pool: "worker",
-    consumer: async (item) => {
-      await sleep(25);
-      if ((item.payload === "failme" || item.payload === "failme2") && item.attempts === 1) throw new Error("第一次必挂");
-      done.push(`${item.payload}#${item.attempts}`);
-    },
-    onError: (item) => { errors.push(item.id); },
-  });
-  assert(q.size() === 0 && q.inflight() === 0, `队列未抽干 size=${q.size()} inflight=${q.inflight()}`);
-  assert(done.length === 5, `完成=${done.length}`);
-  assert(errors.length === 2, `onError 次数=${errors.length}`);
-  assert(done.some((d) => d === "failme#2") && done.some((d) => d === "failme2#2"), `重派后成功=${done}`);
-  const ev = ex.events().map((e) => e.type);
-  assert(ev.includes("queue.claim") && ev.includes("queue.ack") && ev.includes("queue.requeue"), "事件流含 claim/ack/requeue");
-});
-
 // ⑤ 释放保证：任务失败 → 许可与名额全释放 + 错误上抛
 await t("E. 释放保证（失败任务释放许可，池计数正确）", async () => {
   const ex = createExecutor();
@@ -123,37 +95,6 @@ await t("F. 超时（TaskTimeoutError，许可释放）", async () => {
   catch (e) { typed = e instanceof TaskTimeoutError; }
   assert(typed, "应为 TaskTimeoutError");
   assert(ex.stats().capacities[0].held.length === 0, "超时后许可未释放");
-});
-
-// ⑦ 文件队列：leads→todo→done 流转 + 重派 + 崩溃恢复
-await t("G. FileQueue（流转/重派/recover）", async () => {
-  const root = mkdtempSync(join(tmpdir(), "exq-"));
-  const dirs = { pending: join(root, "leads"), inflight: join(root, "todo"), archive: join(root, "done") };
-  for (const d of Object.values(dirs)) mkdirSync(d, { recursive: true });
-  for (const f of ["HYP-1.md", "HYP-2.md", "HYP-bad.md"]) writeFileSync(join(dirs.pending, f), f);
-
-  const ex = createExecutor();
-  const fq = new FileQueue({ ...dirs, filter: (n) => n.startsWith("HYP-") });
-  ex.declareQueue("HYP", { backend: fq });
-  ex.declarePool("verify", { concurrency: 2 });
-
-  const seen = [];
-  await ex.serve({
-    queue: "HYP", pool: "verify",
-    consumer: async (item) => {
-      await sleep(15);
-      if (item.id === "HYP-bad.md" && item.attempts === 1) throw new Error("首试挂");
-      seen.push(`${item.id}#${item.attempts}`);
-    },
-  });
-  assert(readdirSync(dirs.archive).length === 3, `归档=${readdirSync(dirs.archive)}`);
-  assert(readdirSync(dirs.pending).length === 0 && readdirSync(dirs.inflight).length === 0, "源目录未清空");
-  assert(seen.includes("HYP-bad.md#2"), `重派=${seen}`);
-
-  // 崩溃恢复：手工把一件放进 inflight，recover 回 pending
-  renameSync(join(dirs.archive, "HYP-1.md"), join(dirs.inflight, "HYP-1.md"));
-  fq.recover();
-  assert(readdirSync(dirs.pending).includes("HYP-1.md"), "recover 未退回");
 });
 
 // ⑧ locked 池：并发锁死拒绝调整

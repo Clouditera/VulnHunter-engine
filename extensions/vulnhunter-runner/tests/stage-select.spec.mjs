@@ -59,13 +59,13 @@ await t("阶段失败：stageErrors 落 run state（message+at）；重跑成功
   ] };
   try { await runStages(boom, mkCtx(dir), { runId: "e1" }); throw new Error("应当抛错"); }
   catch (e) { assert(/boom-detail/.test(String(e?.message ?? e)), String(e?.message ?? e)); }
-  let state = JSON.parse(readFileSync(join(dir, "runs", "spec-e1.json"), "utf-8"));
+  let state = JSON.parse(readFileSync(join(dir, "system", "runs", "spec-e1.json"), "utf-8"));
   assert(state.stages.a === "failed", JSON.stringify(state.stages));
   assert(String(state.stageErrors?.a?.message ?? "").includes("boom-detail"), JSON.stringify(state.stageErrors));
   assert(typeof state.stageErrors?.a?.at === "string" && !Number.isNaN(Date.parse(state.stageErrors.a.at)), JSON.stringify(state.stageErrors));
   const ok = { name: "spec", stages: () => [{ name: "a", run: async () => {} }] };
   await runStages(ok, mkCtx(dir), { runId: "e1", only: "a" });
-  state = JSON.parse(readFileSync(join(dir, "runs", "spec-e1.json"), "utf-8"));
+  state = JSON.parse(readFileSync(join(dir, "system", "runs", "spec-e1.json"), "utf-8"));
   assert(state.stages.a === "done", JSON.stringify(state.stages));
   assert(!state.stageErrors || !("a" in state.stageErrors), `成功后应清除：${JSON.stringify(state.stageErrors)}`);
 });

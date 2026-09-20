@@ -8,20 +8,23 @@
  *   - fork = 提取当前路径成独立会话文件（并发链用）；
  *   - user prompt 承载任务目标（任务书+任务句由 lib 装配）。
  *
- * 血缘：每次 mark/goto/fork/compact 记一行到 <workdir>/sessions-lineage.jsonl。
+ * 血缘：每次 mark/goto/fork/compact 记一行到 <workdir>/system/sessions-lineage.jsonl。
  */
 
 import {
   createAgentSession, DefaultResourceLoader, SettingsManager, SessionManager, parseFrontmatter,
-  type AgentSession, type AgentSessionEvent,
+  type AgentSession, type AgentSessionEvent, type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { NODES, type NodeSpec } from "./nodes.ts";
 import { lineage, OpsCounter, tasksCovering, loadLedgerRows } from "./ledger.ts";
 import { buildSessionState, type SessionState } from "./session-state.ts";
-import { type FnBinding, type WsContext } from "./workspace-tools.ts";
-import { makeArtifactTool } from "./artifact.ts";
+import { stageTools, type ToolBinding, type WsContext } from "./tools/common.ts";
+import { makeProfilerTool } from "./tools/profiler.ts";
+import { makeSandboxTool } from "./tools/sandbox.ts";
+import { makeHypTool } from "./tools/hyp.ts";
+import { makeFindingTool } from "./tools/finding.ts";
 import { monitorState } from "./monitor-state.ts";
 import { getCoveragePaths, loadCoverageConfig, loadCoverageMap, aggregateCoverageEvents, persistCoverageMap, recordReadCoverageEvent } from "../node-ext/code-coverage/coverage-core.ts";
 
@@ -54,11 +57,11 @@ export interface SessionHandle {
   goto(label: string, opts?: { summarize?: boolean; customInstructions?: string; summaryLabel?: string }): Promise<void>;
   summarizeTo(label: string, opts: { summaryLabel: string; guide?: string }): Promise<void>;
   /** 提取当前路径成独立会话，返回新 handle（并发链用）；agent/binding 可换（会话历史与工具集正交） */
-  fork(id: string, agent?: string, binding?: FnBinding): Promise<SessionHandle>;
+  fork(id: string, agent?: string, binding?: ToolBinding): Promise<SessionHandle>;
   /** hunt 覆盖率记录开关（init 宿主只在 hunt 轮次期间打开，口径=hunt 精读） */
   setCoverage(on: boolean): void;
   /** 会话内动态改 binding（如同一主干会话切 hunt 轮次时换编号 source） */
-  setBinding(patch: Partial<FnBinding>): void;
+  setBinding(patch: Partial<ToolBinding>): void;
   /** 当前会话文件路径 */
   sessionFile(): string | undefined;
   /** 会话状态视图（任务定位/摘要映射/活态，fish 09-15） */
@@ -79,7 +82,7 @@ export function loadTaskBook(engineDir: string, name: string): string {
 /** 定稿 user prompt 组装：参数头部 + 任务书 + 任务说明句（fish 09-02 裁定） */
 export function buildPrompt(ctx: SessionCtx, agentName: string, task: string, extra?: string): string {
   const head = [
-    `工作区根目录：${ctx.workdir}（任务里的产物相对路径——leads/ todo/ findings/ 等——都以它为基准）`,
+    `工作区根目录：${ctx.workdir}（任务里的产物相对路径——knowledge/ findings/ system/ 等——都以它为基准）`,
     `引擎扩展根目录：${nodeRoot(ctx.engineDir)}（任务书提到的 skills/ 等引擎侧相对路径以它为基准，不是目标项目目录）`,
     ctx.params.sandbox_cfg ? `沙箱连接配置：${ctx.params.sandbox_cfg}` : "",
     ctx.params.vuln_focus ? `漏洞关注方向：${ctx.params.vuln_focus}` : "",
@@ -107,7 +110,7 @@ function findTaskStart(sm: SessionManager, preLeaf: string | null, endEntry?: st
   }
   return found;
 }
-async function createSession(ctx: SessionCtx, agentName: string, binding: FnBinding, sessionManager?: SessionManager): Promise<{ sess: AgentSession; spec: NodeSpec; customTools: ReturnType<typeof makeArtifactTool>[] }> {
+async function createSession(ctx: SessionCtx, agentName: string, binding: ToolBinding, sessionManager?: SessionManager): Promise<{ sess: AgentSession; spec: NodeSpec; customTools: ToolDefinition[] }> {
   const spec: NodeSpec | undefined = NODES[agentName];
   if (!spec) throw new Error(`未知节点: ${agentName}（nodes.ts 未定义）`);
 
@@ -127,7 +130,16 @@ async function createSession(ctx: SessionCtx, agentName: string, binding: FnBind
   await resourceLoader.reload();
 
   const ws: WsContext = { workdir: ctx.workdir, cwd: ctx.cwd };
-  const customTools = [makeArtifactTool(ws, binding, agentName)];   // artifact 元工具恒定挂载（fns 白名单已废，fish 09-08）
+  // 工具面按阶段注入（矩阵单源：src/tools/common.ts STAGE_TOOLS；工具内 op 不限制，fish 09-20）
+  const factories: Record<string, () => ToolDefinition> = {
+    profiler: () => makeProfilerTool(ws),
+    sandbox: () => makeSandboxTool(ws, agentName),
+    hyp: () => makeHypTool(ws, binding),
+    finding: () => makeFindingTool(ws, binding),
+  };
+  const customTools = stageTools(agentName)
+    .map((name) => factories[name]?.())
+    .filter((t): t is ToolDefinition => !!t);
 
   const { session } = await createAgentSession({
     cwd: ctx.cwd,
@@ -146,17 +158,17 @@ export { SUMMARY_SHAPE } from "./branch-summary.ts";
 export async function startSession(ctx: SessionCtx, opts: {
   agent: string;
   id?: string;
-  binding?: FnBinding;
+  binding?: ToolBinding;
   /** 复活已有会话文件 */
   sessionFile?: string;
 }): Promise<SessionHandle> {
   const id = opts.id ?? `${opts.agent}-${Date.now()}`;
   const sm = opts.sessionFile ? SessionManager.open(opts.sessionFile) : undefined;
-  const bindingRef: FnBinding = opts.binding ?? {};
+  const bindingRef: ToolBinding = opts.binding ?? {};
   const { sess, spec } = await createSession(ctx, opts.agent, bindingRef, sm);
 
   // 监控 + hunt 覆盖记录（hunt 精读=覆盖率唯一口径）
-  monitorState.nodeStart(id, { id, agent: opts.agent, target: opts.binding?.advId ?? opts.binding?.hypId, startTs: Date.now(), workdir: ctx.workdir, cwd: ctx.cwd });
+  monitorState.nodeStart(id, { id, agent: opts.agent, target: opts.binding?.hypId ?? (opts.binding?.tag || undefined), startTs: Date.now(), workdir: ctx.workdir, cwd: ctx.cwd });
   let sessFile: string | undefined;
   try { sessFile = (sess as any).sessionManager?.getSessionFile?.(); if (sessFile) monitorState.nodeSession(id, sessFile); } catch { /* 无碍 */ }
 
@@ -233,7 +245,7 @@ export async function startSession(ctx: SessionCtx, opts: {
       const startedAt = Date.now();
       const smP = (sess as any).sessionManager as SessionManager;
       const preLeaf = smP.getLeafId();
-      const target = bindingRef.hypId ?? bindingRef.advId;
+      const target = bindingRef.hypId ?? (bindingRef.tag || undefined);
       const preview = text.replace(/\s+/g, " ").slice(0, 160);
       ops.reset();   // 计数窗口 = 本任务
       let failures = 0;
@@ -328,7 +340,7 @@ export async function startSession(ctx: SessionCtx, opts: {
       ln({ id, action: "goto", label, summarize: !!opts?.summarize, summaryLabel: opts?.summaryLabel });
     },
 
-    async fork(newId: string, newAgent?: string, newBinding?: FnBinding) {
+    async fork(newId: string, newAgent?: string, newBinding?: ToolBinding) {
       // 注意：createBranchedSession 会把调用它的 SessionManager 就地变成新分支（pi 的 /branch 语义），
       // 所以必须用一次性实例操作，否则会话本身被劫持（fork 后原会话标记全丢）。
       const sm2 = (sess as any).sessionManager as SessionManager;
@@ -345,7 +357,7 @@ export async function startSession(ctx: SessionCtx, opts: {
 
     setCoverage(on: boolean) { covOn = on; },
 
-    setBinding(patch: Partial<FnBinding>) { Object.assign(bindingRef, patch); },
+    setBinding(patch: Partial<ToolBinding>) { Object.assign(bindingRef, patch); },
 
     sessionFile() {
       try { return (sess as any).sessionManager?.getSessionFile?.(); } catch { return undefined; }

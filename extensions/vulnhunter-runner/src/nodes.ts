@@ -14,9 +14,9 @@ export interface NodeSpec {
 }
 
 /** 初始化节点（onboard/research）统一配置（fish 09-05 裁定 #4：同一份，消除差异）
- *  同会话连续执行：函数取两阶段并集，扩展同挂 pi-web-access。 */
+ *  同会话连续执行：工具按阶段矩阵注入（src/tools/common.ts STAGE_TOOLS），扩展同挂 pi-web-access。 */
 const INIT_NODE: NodeSpec = {
-  skills: ["project-profiler", "threat-modeling", "wiki-maintainer", "audit-chain"],
+  skills: ["project-profiler", "threat-modeling", "wiki-maintainer"],
   extensions: ["pi-web-access"],
 };
 
@@ -26,9 +26,9 @@ export const NODES: Record<string, NodeSpec> = {
   /** build：理解构建/部署 + 按需实际执行（fish 09-08；onboard 之后固定环节） */
   build: {},
   /** init-session 宿主（onboard/research 同会话 + hunt 多轮也在这个会话里跑，fish 09-05 #6）：
-   *  函数 = init 并集 + hunt 的 emit_hyp */
+   *  工具 = init-host 并集（profiler + hyp） */
   "init-host": {
-    skills: ["project-profiler", "threat-modeling", "wiki-maintainer", "audit-chain"],
+    skills: ["project-profiler", "threat-modeling", "wiki-maintainer"],
     extensions: ["pi-web-access", "code-coverage"],   // code-coverage：hunt 多轮自查阅读覆盖（fish 09-11）
   },
   hunt: {

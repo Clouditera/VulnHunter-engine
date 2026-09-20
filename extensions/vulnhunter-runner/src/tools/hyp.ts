@@ -29,6 +29,10 @@ export function hypFiles(workdir: string): string[] {
   return listDir(paths.hypDir(workdir)).filter((f) => f.startsWith("HYP-") && f.endsWith(".json"));
 }
 
+export function hypIds(workdir: string): string[] {
+  return hypFiles(workdir).map((f) => f.replace(/\.json$/, ""));
+}
+
 export function readHyp(workdir: string, id: string): HypRecord | null {
   return readJSON<HypRecord>(paths.hyp(workdir, id));
 }
