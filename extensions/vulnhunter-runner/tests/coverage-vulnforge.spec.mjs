@@ -27,7 +27,7 @@ function setup() {
   const out = join(root, ".vulnforge");
   mkdirSync(join(root, "src"), { recursive: true });
   mkdirSync(join(out, "todo"), { recursive: true });
-  mkdirSync(join(out, "knowledge", "coverage"), { recursive: true });
+  mkdirSync(join(out, "system", "coverage"), { recursive: true });
   writeFileSync(join(root, "src", "a.c"), LINES);
   writeFileSync(join(out, "todo", "x.md"), LINES);
   const cov = getCoveragePaths(out);
@@ -81,7 +81,7 @@ await t("存量自愈：旧 map 里的 .vulnforge 幽灵条目加载即被剔除
     },
     directories: {},
   };
-  mkdirSync(join(out, "knowledge", "coverage"), { recursive: true });
+  mkdirSync(join(out, "system", "coverage"), { recursive: true });
   writeFileSync(cov.jsonPath, JSON.stringify(legacy));
   const map = loadCoverageMap(cov.jsonPath, root, out);
   assert(!map.files[".vulnforge/todo/x.md"], "legacy workspace entry must be healed away");

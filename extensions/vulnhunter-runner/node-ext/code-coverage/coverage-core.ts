@@ -11,7 +11,7 @@ import { parse as parseYaml } from "yaml";
 const PROBE_BYTES = 8192;
 
 // ============================================================================
-// 覆盖统计目标配置（09-11 fish 定）：.vulnforge/coverage.yaml
+// 覆盖统计目标配置（09-11 fish 定；09-20 迁 system/）：.vulnforge/system/coverage/coverage.yaml
 // runner 启动参数 coverage_include / coverage_exclude 落盘而来；
 // 枚举（walkFiles）、记录（resolveToRel）、查询（coverage 工具）三层共读。
 // 默认仅排点目录（.vulnforge/.git 天然在内），不再内置 vendor 等黑名单。
@@ -22,7 +22,7 @@ export const DEFAULT_COVERAGE_CONFIG: CoverageConfig = { include: ["."], exclude
 
 export function loadCoverageConfig(outputDir: string): CoverageConfig {
   try {
-    const p = path.join(outputDir, "coverage.yaml");
+    const p = path.join(outputDir, "system", "coverage", "coverage.yaml");
     if (!existsSync(p)) return DEFAULT_COVERAGE_CONFIG;
     const doc: any = parseYaml(readFileSync(p, "utf8"));
     const norm = (v: unknown): string[] =>
@@ -548,7 +548,7 @@ function renderFileView(map: CoverageMap, filePath: string): string {
 // ============================================================================
 
 export function getCoveragePaths(outputDir: string) {
-  const coverageDir = path.join(outputDir, "knowledge", "coverage");
+  const coverageDir = path.join(outputDir, "system", "coverage");
   return {
     coverageDir,
     jsonPath: path.join(coverageDir, "code-reading-coverage.json"),

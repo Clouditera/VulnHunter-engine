@@ -128,7 +128,7 @@ function buildRun(workdir: string, runId: string) {
   try { out.hyps = readdirSyncSafe(join(workdir, "system", "hyp")); } catch { out.hyps = []; }
   try { out.findings = readdirSyncSafe(join(workdir, "findings")); } catch { out.findings = []; }
   try {
-    const cov = JSON.parse(readFileSync(join(workdir, "knowledge", "coverage", "code-reading-coverage.json"), "utf-8"));
+    const cov = JSON.parse(readFileSync(join(workdir, "system", "coverage", "code-reading-coverage.json"), "utf-8"));
     const s = cov.summary ?? {};
     out.coverage = { pct: s.coverage != null ? Math.round(s.coverage * 1000) / 10 : null, read: s.read_lines, total: s.total_lines, coveredFiles: s.covered_files, files: s.files };
   } catch { out.coverage = null; }
@@ -199,7 +199,7 @@ function buildStageDetail(workdir: string, runId: string, stage: string) {
     env: readdirSyncSafe(join(workdir, "knowledge", "env")),
     research: readdirSyncSafe(join(workdir, "knowledge", "research")),
     wiki: readdirSyncSafe(join(workdir, "knowledge", "wiki")),
-    coverageMap: existsSync(join(workdir, "knowledge", "coverage", "code-reading-coverage.json")),
+    coverageMap: existsSync(join(workdir, "system", "coverage", "code-reading-coverage.json")),
   };
 
   // 阶段指标

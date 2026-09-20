@@ -61,7 +61,8 @@ await t("include 通配：*.c 只收 C 文件（任意目录深度）", async ()
   writeFileSync(join(root, "a.c"), "int main(){return 0;}\n");
   writeFileSync(join(root, "b.md"), "# doc\n");
   writeFileSync(join(root, "sub", "c2.c"), "void f(){}\n");
-  writeFileSync(join(out, "coverage.yaml"), 'include:\n  - "*.c"\nexclude: []\n');
+  mkdirSync(join(out, "system", "coverage"), { recursive: true });
+  writeFileSync(join(out, "system", "coverage", "coverage.yaml"), 'include:\n  - "*.c"\nexclude: []\n');
   const names = Object.keys(loadMap(root, out).files).sort();
   assert(names.join(",") === "a.c,sub/c2.c", `expect [a.c,sub/c2.c] got [${names}]`);
 });
@@ -72,17 +73,18 @@ await t("exclude 通配：*.json 全排、目录不被误剪、其余照收", as
   writeFileSync(join(root, "config.json"), '{"a":1}\n');
   writeFileSync(join(root, "data", "x.json"), '{"b":2}\n');
   writeFileSync(join(root, "data", "y.c"), "int y;\n");
-  writeFileSync(join(out, "coverage.yaml"), 'include:\n  - "."\nexclude:\n  - "*.json"\n');
+  mkdirSync(join(out, "system", "coverage"), { recursive: true });
+  writeFileSync(join(out, "system", "coverage", "coverage.yaml"), 'include:\n  - "."\nexclude:\n  - "*.json"\n');
   const names = Object.keys(loadMap(root, out).files).sort();
   assert(names.join(",") === "data/y.c", `expect [data/y.c] got [${names}]`);
 });
 
 await t("记录侧：exclude 通配命中的文件不记录，未命中的照记", async () => {
   const { root, out } = mk();
-  mkdirSync(join(out, "knowledge", "coverage"), { recursive: true });
+  mkdirSync(join(out, "system", "coverage"), { recursive: true });
   writeFileSync(join(root, "data.json"), "{}");
   writeFileSync(join(root, "y.c"), "int y;\n");
-  writeFileSync(join(out, "coverage.yaml"), 'include:\n  - "."\nexclude:\n  - "*.json"\n');
+  writeFileSync(join(out, "system", "coverage", "coverage.yaml"), 'include:\n  - "."\nexclude:\n  - "*.json"\n');
   const cfg = loadCoverageConfig(out);
   const cov = getCoveragePaths(out);
   recordReadCoverageEvent({ jsonlPath: cov.jsonlPath, targetRoot: root, stage: "hunt", input: { path: join(root, "data.json") }, cfg, outputDir: out });
