@@ -9,7 +9,7 @@ const assert = (cond, msg) => { if (!cond) throw new Error(msg ?? "assert failed
 const norm = (a) => [...a].sort().join(",");
 const expect = {
   onboard: ["profiler"],
-  "init-host": ["profiler", "hyp"],
+  "init-host": ["profiler", "hyp", "sandbox"],
   build: ["sandbox"],
   research: ["hyp"],
   compress: [],

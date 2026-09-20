@@ -79,7 +79,7 @@ export function rejectUnknown(params: Record<string, unknown>, known: string[]):
 /** 阶段 → 可用工具（工具级限制的唯一事实源；引擎/调度侧不受限） */
 export const STAGE_TOOLS: Record<string, string[]> = {
   onboard: ["profiler"],
-  "init-host": ["profiler", "hyp"],
+  "init-host": ["profiler", "hyp", "sandbox"],
   build: ["sandbox"],
   research: ["hyp"],
   compress: [],
