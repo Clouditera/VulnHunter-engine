@@ -47,7 +47,8 @@ export async function runHypChain(ctx: LibCtx, init: SessionHandle, hypId: strin
   // 从出生轮末梢 fork 出该 HYP 的独立会话（继承 hunt 各轮摘要）
   const forkAt = opts.forkPoint ?? "verify-start";
   const hypShort = hypId.replace(/^HYP-/, "");           // hunt1-H2
-  const roundShort = (forkAt.match(/hunt(\d+)/) ? `h${forkAt.match(/hunt(\d+)/)![1]}` : undefined) ?? "verify-start";
+  const hm = forkAt.match(/hunt(\d+)/);
+  const roundShort = hm ? `h${hm[1]}` : forkAt;            // huntN→hN；research-done 等原样
   const unlock = await lockFork();
   let chain: SessionHandle;
   try {

@@ -201,6 +201,16 @@ const liteWorkflow = defineStagedWorkflow({
             elected.push({ id, rn, ing });
           }
         }
+        // research（及非轮次来源）的 HYP：出生点是 research-done，同样进研判（fish 09-20：research 可调用 hyp）
+        const researchIds = hypIds(ctx.workdir).filter((idd) => (readHyp(ctx.workdir, idd)?.tag ?? "").startsWith("research"));
+        for (const id of researchIds.slice(0, chainK)) {
+          const rec = readHyp(ctx.workdir, id);
+          if (!rec) continue;
+          if (rec.status === "closed" || rec.conclusion === "refuted") continue;
+          if (readFinding(ctx.workdir, id.replace(/^HYP-/, "BUG-"))) continue;
+          if (elected.some((e2) => e2.id === id)) continue;
+          elected.push({ id, rn: "research", ing: "Σ(on,bu,re)" });
+        }
         // 动态门槛可见性（fail-closed 收口）：沙箱状态未知时明确告警，不静默（09-17 ev 静默缺陷教训）
         if (ctx.params.sandbox_cfg && readSandboxState(ctx.workdir).status === "unknown") {
           ctx.report("⚠ 沙箱状态未知（unknown）——动态链将自行探测并回报 sandbox；请确认 build 阶段已执行 sandbox report");
