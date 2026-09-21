@@ -797,7 +797,7 @@ document.addEventListener("click", async (e) => {
     e.preventDefault();
     const d = S.lastGood?.detail?.state?.data?.roundHyps ?? {};
     const keys = Object.keys(d).sort((a, b) => Number(a.replace(/\\D+/g, "")) - Number(b.replace(/\\D+/g, "")));
-    modal("逐轮 HYP 产出", \`<pre>\${keys.map((k) => \`\${k}  +\${arrLen(d[k])} HYP\`).join("\\n") || "（无）"}</pre><p>主停：覆盖达到阈值且本轮 0 HYP。兜底：连续 3 轮 0 HYP。轮次不默认封顶（除非显式给了 rounds）。</p>\`);
+    modal("逐轮 HYP 产出", \`<pre>\${keys.map((k) => \`\${k}  +\${arrLen(d[k])} HYP\`).join("\\n") || "（无）"}</pre><p>停轮：覆盖达到阈值 且 连续 x 轮 0 HYP（hunt_zero_rounds，默认 3）。轮次不默认封顶（除非显式给了 rounds）。</p>\`);
   }
   else if (action === "events") {
     e.preventDefault();

@@ -5,13 +5,13 @@
  *         → chains（HYP 链扇出，fork 自出生轮末梢+启动 compact；派发依据 system/hyp 状态 + findings 电选）
  *
  * hunt（fish 09-11 定稿）：并发锁 1 单会话逐轮；每轮选一个千行级小功能点精读；
- * 无轮次上限（rounds 仅作显式封顶）；停轮=覆盖>阈值且零新增（主停）/连续3轮零新增（兜底）；
+ * 无轮次上限（rounds 仅作显式封顶）；停轮=覆盖≥阈值 且 连续 x 轮零新增（hunt_zero_rounds，默认 3，fish 09-21 校准）；
  * 摘要两档：每轮结束小摘要（ΣhuntN），上下文占用>60% 时对历史全 hunt 大轮摘要（Σhunt1-N）。
  *
  * 断点/单步：runtime.runStages 驱动，--from <阶段> 续跑、--only <阶段> 单步重试。
  * 标记语法：docs/session-marks.md（<任务>-start[成分] / <任务>-done[成分][+产出]，Σ=已摘要）。
  *
- * 参数（ctx.params）：rounds / chain_filter / chain_concurrency / hunt_coverage_threshold /
+ * 参数（ctx.params）：rounds / chain_filter / chain_concurrency / hunt_coverage_threshold / hunt_zero_rounds /
  * hunt_mode（fresh=每轮从 init 重开）/ coverage_include / coverage_exclude / sandbox_cfg / skip_ev / model_concurrency。
  */
 
@@ -46,6 +46,7 @@ const liteWorkflow = defineStagedWorkflow({
       rounds: ctx.params.rounds ?? "（无上限）",
       hunt_mode: ctx.params.hunt_mode ?? "积累制",
       hunt_coverage_threshold: `${ctx.params.hunt_coverage_threshold ?? "90"}%`,
+      hunt_zero_rounds: ctx.params.hunt_zero_rounds ?? "3",
       chain_filter: ctx.params.chain_filter ?? "全部",
       chain_concurrency: ctx.params.chain_concurrency ?? "3",
       model_concurrency: ctx.params.model_concurrency ?? "3（模型容量许可）",
@@ -112,6 +113,7 @@ const liteWorkflow = defineStagedWorkflow({
         await huntPool.submit(async () => {
         const fresh = ctx.params.hunt_mode === "fresh";
         const threshold = Number(ctx.params.hunt_coverage_threshold || "90");
+        const zeroRounds = Number(ctx.params.hunt_zero_rounds || "3");   // 停轮连零轮数 x（fish 09-21 校准）
         const maxRounds = ctx.params.rounds ? Number(ctx.params.rounds) : Infinity;
         const d = s.state.data;
         // 覆盖数据一律读 coverage 扩展的产物（快照 JSON）——09-20 解耦，runner 不再直接聚合事件
@@ -167,16 +169,11 @@ const liteWorkflow = defineStagedWorkflow({
               lastBig = r0;
             }
           }
-          // 停轮判定（fish 09-11）：主停=覆盖>阈值且本轮零新增；兜底=连续 3 轮零新增
+          // 停轮判定（fish 09-21 校准）：覆盖率达阈值 且 连续 x 轮零新增
           const covPct = targetCov();
-          if (covPct !== null && covPct * 100 >= threshold && news.length === 0) {
-            ctx.report(`覆盖达标（${(covPct * 100).toFixed(1)}% ≥ ${threshold}%）且本轮零新增，hunt 停轮`);
-            d.huntRound = r0; d.huntZeroStreak = 0; d.huntLastBig = lastBig; s.save();
-            break;
-          }
           zeroStreak = news.length === 0 ? zeroStreak + 1 : 0;
-          if (zeroStreak >= 3) {
-            ctx.report(`连续 3 轮零新增（覆盖 ${covPct === null ? "未知" : (covPct * 100).toFixed(1) + "%"}），hunt 兜底停轮`);
+          if (covPct !== null && covPct * 100 >= threshold && zeroStreak >= zeroRounds) {
+            ctx.report(`覆盖达标（${(covPct * 100).toFixed(1)}% ≥ ${threshold}%）且连续 ${zeroRounds} 轮零新增，hunt 停轮`);
             d.huntRound = r0; d.huntZeroStreak = zeroStreak; d.huntLastBig = lastBig; s.save();
             break;
           }
