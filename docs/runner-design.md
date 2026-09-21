@@ -1,6 +1,7 @@
 # Runner 设计定稿：程序化调度引擎（engine-rework）
 
 > **更新说明（2026-09-20 工具重构）**：产物函数层已被四套对象工具替代，队列机制退役（派发改由 system/hyp 状态驱动）；本文函数与队列细节过时，以源码（src/tools/、src/workflows/）为准，保留作架构背景。
+> **09-21 补**：宏观池已收敛为 init / hunt / verify 三池（沙箱=资源容量非池）；hunt∥verify 并行消费、按池模型配置以 src/workflows/audit-lite.ts 头注与 src/model-config.ts 为准。本文「四池」为 08-27 历史设计。
 
 > 2026-08-31 定稿 · 依据《08-引擎演进纲领》+ 08-27/28/31 与 fish 逐节对齐
 > 核心裁定：workflow=TS 代码（无 JSON/YAML 定义）；pi-subagents 下线；主会话退为媒介；
