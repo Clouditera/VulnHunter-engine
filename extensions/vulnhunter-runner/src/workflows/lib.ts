@@ -2,11 +2,11 @@
  * workflow 共享编排件。
  *
  * 现役只有一件：runHypChain——单条 HYP 的研判链（sv/dv [+ev] 同会话串行）。
+ * 沙箱＝资源维度（非池，fish 09-21）：dynamic verify 与 ev 段过沙箱闸（acquireSandbox 嵌套 acquire）。
  * 派发/办结由编排层（audit-lite chains 阶段）负责：本函数只执行链本身，失败直接抛、由编排层重派。
  * （旧队列机制随工具重构删除，fish 09-20；产物读写全部走 hyp/finding/sandbox 工具。）
  */
 
-import type { PoolHandle } from "../executor/index.ts";
 import { buildPrompt, type SessionHandle, type SessionCtx } from "../session.ts";
 import { hypIds, readHyp } from "../tools/hyp.ts";
 import { readFinding } from "../tools/finding.ts";
@@ -27,8 +27,10 @@ export interface HypChainOpts {
   forkPoint?: string;
   /** 链会话启动成分描述（如 Σ(init,h1,h2)）；缺省 Σ(init..出生轮) */
   birthIngredients?: string;
-  /** 沙箱池句柄（workflow 声明；嵌套提交自动继承外层容量） */
-  sandboxPool: PoolHandle;
+  /** 沙箱约束入口（资源维度，非池；嵌套 acquire 继承外层模型许可；并发=沙箱数） */
+  acquireSandbox?: <T>(fn: () => Promise<T>, tag: string) => Promise<T>;
+  /** 链会话登记（运行中模型热切换等）；返回注销函数 */
+  registerLive?: (h: SessionHandle) => () => void;
   /** 从 init 会话文件的标记处分叉（并行安全：每次从磁盘重读，见 session.forkFromLabel） */
   forkAtLabel: (label: string, newId: string) => Promise<SessionHandle>;
 }
@@ -57,6 +59,7 @@ export async function runHypChain(ctx: LibCtx, hypId: string, opts: HypChainOpts
     // fork 自会话文件上的标记（每次从磁盘重读；并行模式下 hunt 仍在追加，旧 handle 看不到新标记——fish 09-21）
     chain = await opts.forkAtLabel(forkAt, `init/${roundShort}/chain-${hypId}`);
   } finally { unlock(); }
+  const unregister = opts.registerLive?.(chain);
 
   try {
     // 启动引导式树摘要（fish 09-10）：init→出生轮 huntN-done 全程覆盖压缩，HYP 正文做相关性过滤
@@ -71,8 +74,12 @@ export async function runHypChain(ctx: LibCtx, hypId: string, opts: HypChainOpts
     // 有沙箱 → dynamic-verify（研判+复现合并）；无沙箱 → static-verify（纯静态裁决，fish 09-10）
     const stageCode = dynamicMode ? "dv" : "sv";
     const book = dynamicMode ? "dynamic-verify" : "static-verify";
-    const r = await chain.prompt(buildPrompt(ctx, book, `${book} 任务，研判风险假设的成立性。`, `风险假设：${hypId}（正文与裁决记录在 system/hyp/${hypId}.json，用 hyp({op:"get", id:"${hypId}"}) 读取）`),
+    const runVerdict = () => chain.prompt(buildPrompt(ctx, book, `${book} 任务，研判风险假设的成立性。`, `风险假设：${hypId}（正文与裁决记录在 system/hyp/${hypId}.json，用 hyp({op:"get", id:"${hypId}"}) 读取）`),
       { start: `${stageCode}(${hypShort})-start[${ing}]`, label: `${stageCode}(${hypShort})` });
+    // dynamic verify 受沙箱数限（fish 09-21）：动态模式整段过沙箱闸（嵌套 acquire）；static verify 不受限
+    const r = dynamicMode && opts.acquireSandbox
+      ? await opts.acquireSandbox(runVerdict, `${hypId}·dv`)
+      : await runVerdict();
     if (r.aborted) throw new Error("API 不可用");   // 交编排层重派
     if (!readFinding(ctx.workdir, bugId)) {
       chain.mark(`${stageCode}(${hypShort})-done[${ing},${stageCode}(${hypShort})][+refuted]`);
@@ -89,7 +96,7 @@ export async function runHypChain(ctx: LibCtx, hypId: string, opts: HypChainOpts
         // fail-closed + 可见：沙箱不可用/状态缺失时明确报告，绝不静默跳过（09-17 ev 静默缺陷收口）
         ctx.report(`${hypId}：ev-assess 跳过（sandbox=${st.status}${st.status === "unknown" ? "——沙箱状态缺失，检查 build/动态链是否回报 sandbox 工具" : ""}）`);
       } else {
-        await opts.sandboxPool.submit(async () => {
+        const runEv = async () => {
           // dynamic-verify 已含复现；这里只判 ev 门槛（poc reproduced 且 exp pending）后接 ev-assess
           const rec = readFinding(ctx.workdir, bugId);
           if (rec && rec.poc_status === "reproduced" && rec.exp_status === "pending") {
@@ -98,11 +105,14 @@ export async function runHypChain(ctx: LibCtx, hypId: string, opts: HypChainOpts
             if (!r3.aborted) chain.mark(`ev(${hypShort})-done[Σ,${stageCode}(${hypShort}),ev(${hypShort})][+EV 已评]`);
             else ctx.report(`${hypId}：ev-assess API 中止`);
           }
-        }, { tag: `${hypId}·ev` });
+        };
+        // ev 段同样受沙箱闸（嵌套 acquire；继承外层许可）
+        await (opts.acquireSandbox ? opts.acquireSandbox(runEv, `${hypId}·ev`) : runEv());
       }
     }
   } finally {
     chain.close();
+    unregister?.();
   }
 }
 

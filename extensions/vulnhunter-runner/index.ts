@@ -18,6 +18,7 @@ import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { Workflow, WorkflowContext } from "./src/runtime.ts";
 import { listFindings } from "./src/tools/finding.ts";
+import { effectiveModelSpec, MODEL_POOLS, parseModelSpec, readModelConfig, writeModelConfig, type ModelPool } from "./src/model-config.ts";
 import { createMonitorComponent } from "./src/monitor.ts";
 import { ensureWebService } from "./src/web.ts";
 
@@ -84,13 +85,15 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool(defineTool({
     name: "vulnhunter",
     label: "VulnHunter",
-    description: `VulnHunter 审计引擎入口。op=run 启动审计（后台）/ status 查进度 / resume 断点续跑 / report 读结果。target=目标项目路径（缺省=会话当前目录）。${WF_DOC}`,
+    description: `VulnHunter 审计引擎入口。op=run 启动审计（后台）/ status 查进度 / resume 断点续跑 / report 读结果 / model 查或切换模型配置（按池）。target=目标项目路径（缺省=会话当前目录）。${WF_DOC}`,
     parameters: Type.Object({
-      op: Type.String({ description: "run | status | resume | report" }),
+      op: Type.String({ description: "run | status | resume | report | model" }),
       workflow: Type.Optional(Type.String({ description: "run/resume 用：workflow 名（run 必填，resume 缺省=上次）" })),
       target: Type.Optional(Type.String({ description: "目标项目路径（缺省=会话当前目录）；相对路径按当前目录解析" })),
       params: Type.Optional(Type.Record(Type.String(), Type.String(), { description: "run 用：vuln_focus / coverage_include / coverage_exclude / sandbox_cfg 等" })),
       from: Type.Optional(Type.String({ description: "resume 用：从哪个阶段续跑（如 hunt1 / chains）；不填=自动从上次的 failed 阶段" })),
+      pool: Type.Optional(Type.String({ description: "model 用：global | init | hunt | verify（缺省=global）" })),
+      model: Type.Optional(Type.String({ description: "model 用：'provider/model[:thinking]'；给值=切换，空串=清除该池配置；不给=只查询" })),
     }),
     async execute(_id, args, _signal, _onUpdate, ectx) {
       const targetRoot = args.target ? resolve(ectx.cwd, args.target) : ectx.cwd;
@@ -98,6 +101,22 @@ export default function (pi: ExtensionAPI) {
       const ok = (text: string) => ({ content: [{ type: "text" as const, text }], details: {} });
       const bad = (text: string): never => { throw new Error(`ERROR: ${text}`); };
       if (args.target && (!existsSync(targetRoot) || !statSync(targetRoot).isDirectory())) bad(`target 不存在或不是目录：${targetRoot}（相对路径按会话当前目录解析）`);
+
+      if (args.op === "model") {
+        const poolKey = String(args.pool ?? "global") as ModelPool;
+        if (!MODEL_POOLS.includes(poolKey)) bad(`未知池：${poolKey}（可用：${MODEL_POOLS.join(" / ")}）`);
+        if (args.model !== undefined && String(args.model).trim()) parseModelSpec(String(args.model));   // 语法校验，出错抛教学错误
+        let cfg;
+        if (args.model !== undefined) {
+          const patch: Partial<Record<ModelPool, string>> = {};
+          patch[poolKey] = String(args.model);
+          cfg = writeModelConfig(workdir, patch);
+        } else cfg = readModelConfig(workdir);
+        const eff = (p: ModelPool) => effectiveModelSpec(cfg, p) ?? "（settings.json 默认）";
+        const lines = MODEL_POOLS.map((p) =>
+          p === "global" ? `  global  ${cfg.global ?? "（未设）"}` : `  ${p.padEnd(7)} ${cfg[p] ?? "（未设）"}  → 生效：${eff(p)}`);
+        return ok(`模型配置（${workdir}/system/model.json）：\n${lines.join("\n")}\n\n运行中的 run：在跑会话下一轮生效，新任务（新链/新轮）直接生效；未设项走 settings.json 默认。`);
+      }
 
       if (args.op === "status") {
         const runs = readRuns(workdir);

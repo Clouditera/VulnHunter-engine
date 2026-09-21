@@ -35,7 +35,7 @@ export interface RunInfo {
   endedAt?: number;
   status: "running" | "done" | "error";
   note?: string;
-  sandbox?: boolean;   // 本 run 是否启用沙箱（sandbox_cfg 有无）——主页区分 sandbox 池“未启用/空闲”（09-14 designer）
+  sandbox?: boolean;   // 本 run 是否启用沙箱（sandbox_cfg 有无）——主页区分沙箱容量“未启用/空闲”（09-14 designer；09-21 沙箱=资源容量非池）
   currentStage?: string;          // 阶段开始时写实（09-14 designer：--from/--only 下从 pending 猜不准）
   config?: Record<string, unknown>; // workflow 自报的解析后有效配置（默认值已落，前端不猜）
   pid?: number;         // 宿主进程 pid——注册表回放时判活

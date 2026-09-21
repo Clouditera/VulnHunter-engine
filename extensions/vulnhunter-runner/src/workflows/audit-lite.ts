@@ -3,6 +3,7 @@
  *
  * 阶段表：onboard → build → research → compress（压缩跳转）→ hunt（单阶段多轮）
  *         → chains（HYP 链扇出，fork 自出生轮末梢+启动 compact；派发依据 system/hyp 状态 + findings 电选）
+ * 池（fish 09-21 三池定稿）：init（onboard/build/research/compress，锁1）/ hunt（锁1）/ verify（sv|dv）；沙箱=资源容量非池。
  *
  * hunt（fish 09-11 定稿）：并发锁 1 单会话逐轮；每轮选一个千行级小功能点精读；
  * 无轮次上限（rounds 仅作显式封顶）；停轮=覆盖≥阈值 且 连续 x 轮零新增（hunt_zero_rounds，默认 3，fish 09-21 校准）；
@@ -12,16 +13,18 @@
  * 标记语法：docs/session-marks.md（<任务>-start[成分] / <任务>-done[成分][+产出]，Σ=已摘要）。
  *
  * 参数（ctx.params）：rounds / chain_filter / chain_concurrency / hunt_coverage_threshold / hunt_zero_rounds /
- * hunt_mode（fresh=每轮从 init 重开）/ coverage_include / coverage_exclude / sandbox_cfg / skip_ev / model_concurrency。
+ * hunt_mode（fresh=每轮从 init 重开）/ coverage_include / coverage_exclude / sandbox_cfg / skip_ev / model_concurrency /
+ * 模型：model（全局）/ model_init / model_hunt / model_verify（按池），语法 provider/model[:thinking]（见 model-config.ts）。
  */
 
 import { defineStagedWorkflow, runStages, type StageCtx, type StageDef, type WorkflowContext } from "../runtime.ts";
 import { createExecutor } from "../executor/index.ts";
 import { createWakeQueue, electVerifyCandidates, runHypChain, runVerifyConsumer } from "./lib.ts";
-import { buildPrompt, forkFromLabel } from "../session.ts";
+import { buildPrompt, forkFromLabel, type SessionHandle } from "../session.ts";
 import { monitorState } from "../monitor-state.ts";
 import { hypIds, updateHyp } from "../tools/hyp.ts";
 import { readSandboxState } from "../tools/sandbox.ts";
+import { createLiveModelSwitch, createModelFileWatch, effectiveModelSpec, readModelConfig, seedModelConfigFromParams } from "../model-config.ts";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -39,8 +42,15 @@ const liteWorkflow = defineStagedWorkflow({
       const s = JSON.parse(readFileSync(join(ctx.engineDir, "settings.json"), "utf-8"));
       if (s.defaultProvider && s.defaultModel) model = `${s.defaultProvider}/${s.defaultModel}`;
     } catch { /* 无碍 */ }
+    // 按池模型（fish 09-21）：model=汇总视图；model_* = 各池生效值（文件已含启动参数，stages() 先于本视图执行）
+    const mcfg = readModelConfig(ctx.workdir);
+    const modelOf = (p: "init" | "hunt" | "verify"): string => effectiveModelSpec(mcfg, p) ?? model;
+    const allSame = modelOf("init") === modelOf("hunt") && modelOf("hunt") === modelOf("verify");
     return {
-      model,
+      model: allSame ? modelOf("init") : `init=${modelOf("init")} · hunt=${modelOf("hunt")} · verify=${modelOf("verify")}`,
+      model_init: modelOf("init"),
+      model_hunt: modelOf("hunt"),
+      model_verify: modelOf("verify"),
       vuln_focus: ctx.params.vuln_focus ?? "（全方向）",
       rounds: ctx.params.rounds ?? "（无上限）",
       hunt_mode: ctx.params.hunt_mode ?? "积累制",
@@ -68,48 +78,70 @@ const liteWorkflow = defineStagedWorkflow({
     const initPool = exec.declarePool("init", { concurrency: 1, locked: true, priority: 40, needs: ["model"] });
     const huntPool = exec.declarePool("hunt", { concurrency: 1, locked: true, priority: 30, needs: ["model"] });
     const verifyPool = exec.declarePool("verify", { concurrency: chainConc, priority: 10, needs: ["model"] });
-    const sandboxPool = exec.declarePool("sandbox", { concurrency: 1, priority: 20, needs: ["sandbox", "model"] });
+    // 沙箱＝资源维度（不是池，fish 09-21）：dynamic verify / ev 段过沙箱闸（嵌套 acquire，继承外层模型许可）
+    const acquireSandbox = <T>(fn: () => Promise<T>, tag: string): Promise<T> => {
+      const cap = exec.stats().capacities.find((c) => c.name === "sandbox");
+      return cap && cap.permits > 0 ? exec.acquire({ sandbox: 1 }, fn, { tag, priority: 10 }) : fn();
+    };
     const wakeups = createWakeQueue();   // hunt ∥ verify 事件唤醒（task.end / 轮末 / 收尾；fish 09-21）
+
+    // ---- 模型配置（fish 09-21）：按池分配（init/hunt/verify）+ 运行中热切换 ----
+    seedModelConfigFromParams(ctx.workdir, ctx.params);   // 启动参数并入单源文件（只写显式给出的项）
+    const modelSpecFor = (pool: "init" | "hunt" | "verify"): string | undefined => effectiveModelSpec(readModelConfig(ctx.workdir), pool);
+    const modelSwitch = createLiveModelSwitch({ read: () => readModelConfig(ctx.workdir), report: (m) => ctx.report(m) });
+    const modelWatch = createModelFileWatch({ workdir: ctx.workdir, onChanged: () => modelSwitch.apply() });
+    const registerLive = (h: SessionHandle, pool: () => "init" | "hunt" | "verify", applied: string | undefined): (() => void) => modelSwitch.register(h, pool, applied);
+    const ensureModelWatch = (): (() => void) => modelWatch.acquire();
+    // 阶段复用：开/复活本阶段池的会话（按池模型注入 + 登记热切换 + 启动模型监听）
+    const pooledOpen = async (s: import("../runtime.ts").StageCtx, pool: "init" | "hunt", tag: string, o?: { fresh?: boolean }) => {
+      const unwatch = ensureModelWatch();
+      try {
+        const spec = modelSpecFor(pool);
+        const h = await s.openSession("init", "init-host", { binding: { tag }, ...(o?.fresh ? { fresh: true } : {}), ...(spec ? { modelSpec: spec } : {}) });
+        const unreg = registerLive(h, () => pool, spec);
+        return { h, done: () => { unreg(); unwatch(); } };
+      } catch (e) { unwatch(); throw e; }
+    };
     monitorState.attachExecutor(exec);   // 观察台/监控台数据源 = executor.stats()
 
     // ---- init 三段 ----
     out.push({ name: "onboard", run: async (s) => {
-      const s0 = await s.openSession("init", "init-host", { binding: { tag: "init" }, fresh: true });
+      const { h: s0, done: stageDone } = await pooledOpen(s, "init", "init", { fresh: true });
       try {
         const r = await initPool.submit(() => s0.prompt(buildPrompt(ctx, "onboard", "onboard 任务，初始化整个审计任务。"),
           { start: "onboard-start[∅]", done: "onboard-done[on][+profiler]", label: "onboard" }), { tag: "onboard" });
         if (r.aborted) throw new Error("API 不可用");
-      } finally { s0.close(); }   // 关句柄不关文件；后续阶段按文件复活
+      } finally { s0.close(); stageDone(); }   // 关句柄不关文件；后续阶段按文件复活
     } });
     out.push({ name: "build", run: async (s) => {
-      const s0 = await s.openSession("init", "init-host", { binding: { tag: "init" } });
+      const { h: s0, done: stageDone } = await pooledOpen(s, "init", "init");
       try {
         const r = await initPool.submit(() => s0.prompt(buildPrompt(ctx, "build", "build 任务，理解项目的构建与部署方式（落 knowledge/env），并按需实测沙箱、用 sandbox 工具回报状态。"),
           { start: "build-start[on]", done: "build-done[on,bu][+env,sandbox]", label: "build" }), { tag: "build" });
         if (r.aborted) throw new Error("API 不可用");
-      } finally { s0.close(); }
+      } finally { s0.close(); stageDone(); }
     } });
     out.push({ name: "research", run: async (s) => {
-      const s0 = await s.openSession("init", "init-host", { binding: { tag: "research" } });
+      const { h: s0, done: stageDone } = await pooledOpen(s, "init", "research");
       try {
         const r = await initPool.submit(() => s0.prompt(buildPrompt(ctx, "research", "research 任务，检索公开信息与 git 信息、补齐漏洞认可口径；检出的风险线索可直接用 hyp 工具落成假设。"),
           { start: "research-start[on,bu]", label: "research" }), { tag: "research" });
         if (r.aborted) throw new Error("API 不可用");
         s0.mark(`research-done[on,bu,re][+research,wiki]`);
-      } finally { s0.close(); }
+      } finally { s0.close(); stageDone(); }
     } });
     out.push({ name: "compress", run: async (s) => {
-      const s0 = await s.openSession("init", "init-host", { binding: { tag: "init" } });
+      const { h: s0, done: stageDone } = await pooledOpen(s, "init", "init");
       try {
         await initPool.submit(() => s0.summarizeTo("onboard-start", { summaryLabel: "init[Σ(on,bu,re)]", guide: COMPACT_INIT }), { tag: "compress" });
-      } finally { s0.close(); }
+      } finally { s0.close(); stageDone(); }
     } });
 
     // ---- hunt（单阶段多轮；fish 09-11 定稿见文件头注释；与 verify 消费并行，fish 09-21）----
     out.push({ name: "hunt", parallelGroup: "audit-loop", run: async (s) => {
       (s.state.data as Record<string, unknown>).huntSettled = false;   // run 级标志：重跑 hunt 时清掉上次遗留（否则并行 chains 会立刻误判收尾）
       s.save();
-      const s0 = await s.openSession("init", "init-host", { binding: { tag: "hunt" } });
+      const { h: s0, done: stageDone } = await pooledOpen(s, "hunt", "hunt");
       try {
         // 整个多轮 hunt = hunt 池的一个长任务（锁 1，全程持 1 份模型许可）
         await huntPool.submit(async () => {
@@ -189,6 +221,7 @@ const liteWorkflow = defineStagedWorkflow({
         }, { tag: "hunt" });
       } finally {
         s0.close();
+        stageDone();
         (s.state.data as Record<string, unknown>).huntSettled = true;   // 上游落定（含失败路径）：消费侧收干后退出
         s.save();
         wakeups.push();
@@ -198,6 +231,7 @@ const liteWorkflow = defineStagedWorkflow({
     // ---- verify 消费（system/hyp 状态驱动；与 hunt 并行、事件驱动——fish 09-21「下游消费优先」）----
     out.push({ name: "chains", parallelGroup: "audit-loop", run: async (s) => {
       const sessionFile = (s.state.sessions as Record<string, string>).init;
+      const unwatch = ensureModelWatch();   // 链窗口延续模型监听（hunt 结束后监听仍有效）
       // 上游落定：hunt 不在本 run / 已收尾（huntSettled）/ 状态已是 done|failed
       const settled = (): boolean =>
         !s.selected.includes("hunt")
@@ -218,10 +252,12 @@ const liteWorkflow = defineStagedWorkflow({
               try {
                 await verifyPool.submit(
                   () => runHypChain(ctx, c.id, {
-                    forkPoint: c.fork, birthIngredients: c.ing, sandboxPool,
+                    forkPoint: c.fork, birthIngredients: c.ing, acquireSandbox,
+                    registerLive: (h) => registerLive(h, () => "verify", modelSpecFor("verify")),
                     forkAtLabel: (label, newId) => {
                       if (!sessionFile) throw new Error("fork 失败：run 状态缺 init 会话文件");
-                      return forkFromLabel({ ...ctx, runId: s.state.runId }, sessionFile, label, newId, { agent: "hyp-chain", binding: { hypId: c.id } });
+                      const spec = modelSpecFor("verify");
+                      return forkFromLabel({ ...ctx, runId: s.state.runId }, sessionFile, label, newId, { agent: "hyp-chain", binding: { hypId: c.id }, ...(spec ? { modelSpec: spec } : {}) });
                     },
                   }),
                   { tag: `${c.id}#a${attempt}` },
@@ -245,7 +281,7 @@ const liteWorkflow = defineStagedWorkflow({
           report: (m) => ctx.report(m),
         });
         ctx.report(`verify 阶段收工：派发 ${r.dispatched}（完成 ${r.done}，停派 ${r.stopped}）`);
-      } finally { unsub(); }
+      } finally { unsub(); unwatch(); }
     } });
 
     return out;

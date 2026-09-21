@@ -97,8 +97,8 @@ export interface StageCtx extends WorkflowContext {
   save(): void;
   /** 本次 invocation 计划执行的阶段名（并行组内互判用，如 chains 判 hunt 是否在本 run） */
   selected: string[];
-  /** 按角色开/复活会话（有文件则复活，否则新建并登记） */
-  openSession(role: string, agent: string, opts?: { binding?: ToolBinding; fresh?: boolean }): Promise<import("./session.ts").SessionHandle>;
+  /** 按角色开/复活会话（有文件则复活，否则新建并登记）；modelSpec=按池模型（缺省走 settings 默认） */
+  openSession(role: string, agent: string, opts?: { binding?: ToolBinding; fresh?: boolean; modelSpec?: string }): Promise<import("./session.ts").SessionHandle>;
 }
 
 /** 跑阶段化 workflow；from=断点续跑，only=单步重试 */
@@ -166,8 +166,8 @@ export async function runStages(wf: StagedWorkflow, ctx: WorkflowContext, opts: 
     async openSession(role, agent, o = {}) {
       const file = state.sessions[role];
       const h = await startSession({ ...ctx, runId: state.runId }, !o.fresh && file && existsSync(file)
-        ? { agent, id: role, sessionFile: file, binding: o.binding }
-        : { agent, id: role, binding: o.binding });
+        ? { agent, id: role, sessionFile: file, binding: o.binding, modelSpec: o.modelSpec }
+        : { agent, id: role, binding: o.binding, modelSpec: o.modelSpec });
       const f = h.sessionFile?.();
       if (f) { state.sessions[role] = f; save(); }
       return h;

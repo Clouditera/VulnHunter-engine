@@ -13,7 +13,7 @@
 
 import {
   createAgentSession, DefaultResourceLoader, SettingsManager, SessionManager, parseFrontmatter,
-  type AgentSession, type AgentSessionEvent, type ToolDefinition,
+  type AgentSession, type AgentSessionEvent, type CreateAgentSessionOptions, type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -26,6 +26,7 @@ import { makeSandboxTool } from "./tools/sandbox.ts";
 import { makeHypTool } from "./tools/hyp.ts";
 import { makeFindingTool } from "./tools/finding.ts";
 import { monitorState } from "./monitor-state.ts";
+import { parseModelSpec, resolveModel } from "./model-config.ts";
 
 /** 会话上下文（与 WorkflowContext 同形，避免循环依赖） */
 export interface SessionCtx {
@@ -62,6 +63,12 @@ export interface SessionHandle {
   execCommand(text: string): Promise<void>;
   /** 会话内动态改 binding（如同一主干会话切 hunt 轮次时换编号 source） */
   setBinding(patch: Partial<ToolBinding>): void;
+  /** 运行中切模型（"provider/model[:thinking]"）——下一次模型请求生效；未知名/缺 key 抛错 */
+  setModel(spec: string): Promise<void>;
+  /** 会话是否空闲（无进行中的模型请求；未知形态返回 true） */
+  isIdle(): boolean;
+  /** 当前模型 "provider/id"（未知返回 null） */
+  currentModel(): string | null;
   /** 当前会话文件路径 */
   sessionFile(): string | undefined;
   /** 会话状态视图（任务定位/摘要映射/活态，fish 09-15） */
@@ -120,7 +127,7 @@ export async function forkFromLabel(
   sessionFile: string,
   label: string,
   newId: string,
-  o?: { agent?: string; binding?: ToolBinding },
+  o?: { agent?: string; binding?: ToolBinding; modelSpec?: string },
 ): Promise<SessionHandle> {
   const sm = SessionManager.open(sessionFile);
   const entries = sm.getEntries();
@@ -143,10 +150,10 @@ export async function forkFromLabel(
   lineage(ctx.workdir, ctx.runId
     ? { run: ctx.runId, id: newId, action: "fork", label, file: path }
     : { id: newId, action: "fork", label, file: path });
-  return startSession(ctx, { agent: o?.agent ?? "hyp-chain", id: newId, binding: o?.binding, sessionFile: path });
+  return startSession(ctx, { agent: o?.agent ?? "hyp-chain", id: newId, binding: o?.binding, sessionFile: path, modelSpec: o?.modelSpec });
 }
 
-async function createSession(ctx: SessionCtx, agentName: string, binding: ToolBinding, sessionManager?: SessionManager): Promise<{ sess: AgentSession; spec: NodeSpec; customTools: ToolDefinition[] }> {
+async function createSession(ctx: SessionCtx, agentName: string, binding: ToolBinding, sessionManager?: SessionManager, modelSpec?: string): Promise<{ sess: AgentSession; spec: NodeSpec; customTools: ToolDefinition[] }> {
   const spec: NodeSpec | undefined = NODES[agentName];
   if (!spec) throw new Error(`未知节点: ${agentName}（nodes.ts 未定义）`);
 
@@ -177,10 +184,17 @@ async function createSession(ctx: SessionCtx, agentName: string, binding: ToolBi
     .map((name) => factories[name]?.())
     .filter((t): t is ToolDefinition => !!t);
 
+  // 按池模型（fish 09-21）：spec 指定了就显式注入——优先于 settings 默认与会话文件里的旧模型
+  let modelOpts: Pick<CreateAgentSessionOptions, "model" | "thinkingLevel"> = {};
+  if (modelSpec) {
+    const { model, parsed } = await resolveModel(ctx.engineDir, modelSpec);
+    modelOpts = { model, ...(parsed.thinking ? { thinkingLevel: parsed.thinking as CreateAgentSessionOptions["thinkingLevel"] } : {}) };
+  }
   const { session } = await createAgentSession({
     cwd: ctx.cwd,
     agentDir: ctx.engineDir,
     resourceLoader,
+    ...modelOpts,
     ...(sessionManager ? { sessionManager } : {}),
     ...(spec.tools ? { tools: [...spec.tools, ...customTools.map((t) => t.name)] } : {}),
     customTools,
@@ -197,11 +211,13 @@ export async function startSession(ctx: SessionCtx, opts: {
   binding?: ToolBinding;
   /** 复活已有会话文件 */
   sessionFile?: string;
+  /** 指定模型（"provider/model[:thinking]"，按池分配注入）；缺省=settings.json 默认 */
+  modelSpec?: string;
 }): Promise<SessionHandle> {
   const id = opts.id ?? `${opts.agent}-${Date.now()}`;
   const sm = opts.sessionFile ? SessionManager.open(opts.sessionFile) : undefined;
   const bindingRef: ToolBinding = opts.binding ?? {};
-  const { sess, spec } = await createSession(ctx, opts.agent, bindingRef, sm);
+  const { sess, spec } = await createSession(ctx, opts.agent, bindingRef, sm, opts.modelSpec);
 
   // 监控 + hunt 覆盖记录（hunt 精读=覆盖率唯一口径）
   monitorState.nodeStart(id, { id, agent: opts.agent, target: opts.binding?.hypId ?? (opts.binding?.tag || undefined), startTs: Date.now(), workdir: ctx.workdir, cwd: ctx.cwd });
@@ -209,17 +225,22 @@ export async function startSession(ctx: SessionCtx, opts: {
   try { sessFile = (sess as any).sessionManager?.getSessionFile?.(); if (sessFile) monitorState.nodeSession(id, sessFile); } catch { /* 无碍 */ }
 
   // 模型回退守卫（09-15 sec 实报：KIMI_API_KEY 传空 → pi 静默换默认模型继续跑，盲测险情）。
-  // 引擎的模型唯一来源是 settings.json 默认项，实际生效必须一致；不一致默认硬失败。
+  // 期望来源＝当前生效配置：按池指定了模型就用指定值，否则 settings.json 默认；不一致默认硬失败。
   let expectedModel: string | null = null;
   try {
     const sj = JSON.parse(readFileSync(join(ctx.engineDir, "settings.json"), "utf-8")) as { defaultProvider?: string; defaultModel?: string };
     if (sj.defaultProvider && sj.defaultModel) expectedModel = `${sj.defaultProvider}/${sj.defaultModel}`;
   } catch { /* 无 settings.json 或读不出 → 不设期望，跳过守卫 */ }
+  if (opts.modelSpec) {
+    const p = parseModelSpec(opts.modelSpec);
+    expectedModel = `${p.provider}/${p.id}`;
+  }
   if (expectedModel) {
     const em = (sess as unknown as { model?: { provider?: string; id?: string } }).model;
     const got = em?.provider && em?.id ? `${em.provider}/${em.id}` : "（无）";
     if (got !== expectedModel) {
-      const msg = `模型回退检测：settings.json 配置 ${expectedModel}，实际生效 ${got}——疑似 provider 认证缺失被 pi 静默替换。`;
+      const via = opts.modelSpec ? "指定配置" : "settings.json 配置";
+      const msg = `模型回退检测：${via} ${expectedModel}，实际生效 ${got}——疑似 provider 认证缺失被 pi 静默替换。`;
       if (process.env.VULNHUNTER_ALLOW_MODEL_FALLBACK === "1") {
         monitorState.log(`警告：${msg}（已放行）`);
         console.error(`[vulnhunter] ${msg}`);
@@ -395,6 +416,21 @@ export async function startSession(ctx: SessionCtx, opts: {
     },
 
     setBinding(patch: Partial<ToolBinding>) { Object.assign(bindingRef, patch); },
+
+    async setModel(spec: string) {
+      const { model, parsed } = await resolveModel(ctx.engineDir, spec);
+      await (sess as unknown as { setModel: (m: unknown, o?: Record<string, unknown>) => Promise<void> }).setModel(model, {});
+      if (parsed.thinking) (sess as unknown as { setThinkingLevel: (l: string) => void }).setThinkingLevel(parsed.thinking);
+      ln({ id, action: "set-model", model: `${parsed.provider}/${parsed.id}${parsed.thinking ? ":" + parsed.thinking : ""}` });
+    },
+
+    isIdle() {
+      try { const f = (sess as unknown as { isIdle?: () => boolean }).isIdle; return f ? !!f.call(sess) : true; } catch { return true; }
+    },
+
+    currentModel() {
+      try { const m = (sess as unknown as { model?: { provider?: string; id?: string } }).model; return m?.provider && m?.id ? `${m.provider}/${m.id}` : null; } catch { return null; }
+    },
 
     sessionFile() {
       try { return (sess as any).sessionManager?.getSessionFile?.(); } catch { return undefined; }
