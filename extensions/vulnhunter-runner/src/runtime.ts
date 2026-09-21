@@ -65,6 +65,9 @@ import { join } from "node:path";
 export interface StageDef {
   name: string;
   run(sctx: StageCtx): Promise<void>;
+  /** 并行组名：相邻同名阶段的 run 并发执行（fish 09-21：hunt ∥ verify 消费）。
+   *  组内各阶段独立记状态/错误/耗时；断点续跑只补未完成的成员。 */
+  parallelGroup?: string;
 }
 
 export interface StagedWorkflow {
@@ -92,6 +95,8 @@ export interface RunState {
 export interface StageCtx extends WorkflowContext {
   state: RunState;
   save(): void;
+  /** 本次 invocation 计划执行的阶段名（并行组内互判用，如 chains 判 hunt 是否在本 run） */
+  selected: string[];
   /** 按角色开/复活会话（有文件则复活，否则新建并登记） */
   openSession(role: string, agent: string, opts?: { binding?: ToolBinding; fresh?: boolean }): Promise<import("./session.ts").SessionHandle>;
 }
@@ -131,8 +136,32 @@ export async function runStages(wf: StagedWorkflow, ctx: WorkflowContext, opts: 
       ctx.report("⚠ 覆盖率统计目标为空（coverage_include 被 coverage_exclude 吞掉？），coverage 将全程为零");
   } catch { /* 快照未生成：跳过 */ }
 
+  const stages = wf.stages(ctx);
+  for (const st of stages) if (!(st.name in state.stages)) state.stages[st.name] = "pending";
+  save();
+
+  // 本次要跑的阶段（only/from/done 原语义）+ 并行分组（相邻同组 → 并发）
+  const plan: StageDef[] = [];
+  {
+    let active = !opts.from && !opts.only;
+    for (const st of stages) {
+      if (opts.only && st.name !== opts.only) continue;
+      if (opts.only) active = true;
+      if (!active && st.name === opts.from) active = true;
+      if (!active) continue;
+      if (!opts.only && state.stages[st.name] === "done") continue;
+      plan.push(st);
+    }
+  }
+  const groups: StageDef[][] = [];
+  for (const st of plan) {
+    const last = groups[groups.length - 1];
+    if (st.parallelGroup && last && last[0].parallelGroup === st.parallelGroup) last.push(st);
+    else groups.push([st]);
+  }
+
   const sctx: StageCtx = {
-    ...ctx, state, save,
+    ...ctx, state, save, selected: plan.map((st) => st.name),
     report: (m: string) => { monitorState.log(m); ctx.report(m); },   // 报告同时进事件流（09-14 观察台：停轮原因等）
     async openSession(role, agent, o = {}) {
       const file = state.sessions[role];
@@ -145,21 +174,11 @@ export async function runStages(wf: StagedWorkflow, ctx: WorkflowContext, opts: 
     },
   };
 
-  const stages = wf.stages(ctx);
-  for (const st of stages) if (!(st.name in state.stages)) state.stages[st.name] = "pending";
-  save();
-
   // 观察台：env 开门即起（VULNHUNTER_WEB/PORT/HOST），驱动跑批也能被观察（fish 09-14）
   ensureWebService();
   monitorState.runStart({ runId, workflow: wf.name, workdir: ctx.workdir, cwd: ctx.cwd, startedAt: Date.now(), status: "running", sandbox: !!ctx.params.sandbox_cfg, config: wf.configView?.(ctx) });
 
-  let active = !opts.from && !opts.only;
-  for (const st of stages) {
-    if (opts.only && st.name !== opts.only) continue;
-    if (opts.only) active = true;   // 单步模式：命中目标阶段即激活（只跑这一个；fish 09-16 实验暴露原实现整段跳空）
-    if (!active && st.name === opts.from) active = true;
-    if (!active) continue;
-    if (!opts.only && state.stages[st.name] === "done") continue;   // 断点续跑跳过已完成
+  const runOne = async (st: StageDef) => {
     ctx.report(`—— 阶段 ${st.name} ——`);
     monitorState.runStage(ctx.workdir, runId, st.name);
     const stageT0 = Date.now();
@@ -179,11 +198,19 @@ export async function runStages(wf: StagedWorkflow, ctx: WorkflowContext, opts: 
       save();
       ctx.report(`阶段 ${st.name} 失败：${String(e).slice(0, 200)}（修复后可 --from ${st.name} 续跑）`);
       console.error(`[runner] 阶段 ${st.name} 失败：${String(e).replace(/\s+/g, " ").slice(0, 500)}`);
-      monitorState.runEnd(ctx.workdir, runId, "error", `${st.name}: ${String(e).slice(0, 120)}`);
       throw e;
     } finally {
       ((state.data.stageTimes ??= {}) as Record<string, { start: string; ms: number }>)[st.name].ms = Date.now() - stageT0;
       save();
+    }
+  };
+  for (const g of groups) {
+    // 同组并发（fish 09-21：hunt ∥ verify 消费）；组成员各记状态，全部落定后再决定成败
+    const results = await Promise.allSettled(g.map((st) => runOne(st)));
+    const failed = results.find((r) => r.status === "rejected") as PromiseRejectedResult | undefined;
+    if (failed) {
+      monitorState.runEnd(ctx.workdir, runId, "error", `${g.map((st) => st.name).join("+")}: ${String(failed.reason).slice(0, 120)}`);
+      throw failed.reason;
     }
   }
   ctx.report(`workflow ${wf.name}（runId=${runId}）执行完毕`);

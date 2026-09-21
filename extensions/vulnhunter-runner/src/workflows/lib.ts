@@ -8,7 +8,7 @@
 
 import type { PoolHandle } from "../executor/index.ts";
 import { buildPrompt, type SessionHandle, type SessionCtx } from "../session.ts";
-import { readHyp } from "../tools/hyp.ts";
+import { hypIds, readHyp } from "../tools/hyp.ts";
 import { readFinding } from "../tools/finding.ts";
 import { readSandboxState } from "../tools/sandbox.ts";
 
@@ -29,6 +29,8 @@ export interface HypChainOpts {
   birthIngredients?: string;
   /** 沙箱池句柄（workflow 声明；嵌套提交自动继承外层容量） */
   sandboxPool: PoolHandle;
+  /** 从 init 会话文件的标记处分叉（并行安全：每次从磁盘重读，见 session.forkFromLabel） */
+  forkAtLabel: (label: string, newId: string) => Promise<SessionHandle>;
 }
 
 /** fork 互斥：并发链从同一 init 会话分叉时串行化（goto+fork 是树操作，很快） */
@@ -40,7 +42,7 @@ function lockFork(): Promise<() => void> {
   });
 }
 
-export async function runHypChain(ctx: LibCtx, init: SessionHandle, hypId: string, opts: HypChainOpts): Promise<void> {
+export async function runHypChain(ctx: LibCtx, hypId: string, opts: HypChainOpts): Promise<void> {
   const dynamicMode = opts.dynamic ?? !!ctx.params.sandbox_cfg;
   const bugId = hypId.replace(/^HYP-/, "BUG-");
 
@@ -52,8 +54,8 @@ export async function runHypChain(ctx: LibCtx, init: SessionHandle, hypId: strin
   const unlock = await lockFork();
   let chain: SessionHandle;
   try {
-    await init.goto(forkAt);   // 精确标记匹配（huntN-done 标记全名带成分表，goto 用前缀查）
-    chain = await init.fork(`init/${roundShort}/chain-${hypId}`, "hyp-chain", { hypId });
+    // fork 自会话文件上的标记（每次从磁盘重读；并行模式下 hunt 仍在追加，旧 handle 看不到新标记——fish 09-21）
+    chain = await opts.forkAtLabel(forkAt, `init/${roundShort}/chain-${hypId}`);
   } finally { unlock(); }
 
   try {
@@ -102,4 +104,97 @@ export async function runHypChain(ctx: LibCtx, init: SessionHandle, hypId: strin
   } finally {
     chain.close();
   }
+}
+
+// ---------------------------------------------------------------------------
+// 并行消费件（fish 09-21）：选举 + 唤醒队列 + 常驻消费者——hunt ∥ verify
+// ---------------------------------------------------------------------------
+
+export interface VerifyCandidate { id: string; fork: string; ing: string; source: "hunt" | "research"; }
+
+/** 电选：盘上「未办结、未产出 finding」的 HYP（幂等；chain_filter 每轮前 K 条） */
+export function electVerifyCandidates(
+  ctx: { workdir: string; report(msg: string): void },
+  data: Record<string, unknown>,
+  opts: { chainK?: number; includeResearch?: boolean } = {},
+): VerifyCandidate[] {
+  const chainK = opts.chainK ?? Infinity;
+  const roundHyps = (data.roundHyps ?? {}) as Record<string, string[]>;
+  const roundSigma = (data.roundSigma ?? {}) as Record<string, string[]>;
+  const out: VerifyCandidate[] = [];
+  for (const [rn, files] of Object.entries(roundHyps)) {
+    const r0 = Number(rn.replace("hunt", ""));
+    const sig = roundSigma[rn] ?? [];
+    const ing = `Σ(init${sig.length ? "," + sig.join(",") : ""},h${r0})`;
+    for (const f of files.slice(0, chainK)) {
+      const id = f.replace(/\.(md|json)$/, "");
+      const rec = readHyp(ctx.workdir, id);
+      if (!rec) { ctx.report(`电选跳过（HYP 记录缺失）：${id}`); continue; }
+      if (rec.status === "closed" || rec.conclusion === "refuted") continue;   // 已办结（含 refuted）
+      if (readFinding(ctx.workdir, id.replace(/^HYP-/, "BUG-"))) continue;     // 已产出 finding（confirmed）
+      out.push({ id, fork: `${rn}-done`, ing, source: "hunt" });
+    }
+  }
+  if (opts.includeResearch) {
+    const researchIds = hypIds(ctx.workdir).filter((idd) => (readHyp(ctx.workdir, idd)?.tag ?? "").startsWith("research"));
+    for (const id of researchIds.slice(0, chainK)) {
+      const rec = readHyp(ctx.workdir, id);
+      if (!rec) continue;
+      if (rec.status === "closed" || rec.conclusion === "refuted") continue;
+      if (readFinding(ctx.workdir, id.replace(/^HYP-/, "BUG-"))) continue;
+      if (out.some((e2) => e2.id === id)) continue;
+      // fork 自 hunt-end（压缩后的安全点；research-done 在压缩区间内，fork 会丢 Σ(init) 摘要——replay 实踩）
+      out.push({ id, fork: "hunt-end", ing: "Σ(init)", source: "research" });
+    }
+  }
+  return out;
+}
+
+/** 计数信号量式唤醒队列：push 不会丢（无等待者时记账，下次 pop 立即返回） */
+export interface WakeQueue { push(): void; pop(): Promise<void>; }
+export function createWakeQueue(): WakeQueue {
+  let pending = 0;
+  const waiters: Array<() => void> = [];
+  return {
+    push(): void { const w = waiters.shift(); if (w) w(); else pending++; },
+    pop(): Promise<void> { if (pending > 0) { pending--; return Promise.resolve(); } return new Promise<void>((r) => waiters.push(r)); },
+  };
+}
+
+export interface VerifyConsumerHooks {
+  /** 当前盘上可启动的（含来源规则过滤；消费函数自行排除在飞） */
+  candidates(): VerifyCandidate[];
+  markRunning(ids: string[]): void;
+  /** 跑一条（含重试）；done=成功 / stopped=放弃留待下次 */
+  runOne(c: VerifyCandidate): Promise<"done" | "stopped">;
+  slotsFree(): number;
+  settled(): boolean;
+  wakeup(): Promise<void>;
+  /** 任务完成时由消费者内部调用：唤醒主循环重查（否则只能等下一条外部事件，会卡死） */
+  notify(): void;
+  report(msg: string): void;
+}
+
+/** 常驻消费者：有空槽就派、被事件唤醒就查、收干且上游落定才退（外层 while 事件循环） */
+export async function runVerifyConsumer(h: VerifyConsumerHooks): Promise<{ dispatched: number; done: number; stopped: number }> {
+  const inflight = new Set<string>();
+  const attempted = new Set<string>();   // 本 run 内已派过的：done 后回写延迟也不重派；stopped 留待下次运行（同停派语义）
+  let dispatched = 0, done = 0, stopped = 0;
+  for (;;) {
+    const ready = h.candidates().filter((c) => !attempted.has(c.id) && !inflight.has(c.id));
+    while (h.slotsFree() > 0 && ready.length > 0) {
+      const c = ready.shift()!;
+      inflight.add(c.id);
+      attempted.add(c.id);
+      dispatched++;
+      h.markRunning([c.id]);
+      void h.runOne(c)
+        .then((r) => { if (r === "done") done++; else stopped++; })
+        .catch((e) => { stopped++; h.report(`verify 异常未捕获：${c.id} ${String(e).slice(0, 120)}`); })
+        .finally(() => { inflight.delete(c.id); h.notify(); });
+    }
+    if (h.settled() && inflight.size === 0 && h.candidates().filter((c) => !attempted.has(c.id)).length === 0) break;
+    await h.wakeup();
+  }
+  return { dispatched, done, stopped };
 }

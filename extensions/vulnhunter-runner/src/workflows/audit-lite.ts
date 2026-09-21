@@ -17,11 +17,10 @@
 
 import { defineStagedWorkflow, runStages, type StageCtx, type StageDef, type WorkflowContext } from "../runtime.ts";
 import { createExecutor } from "../executor/index.ts";
-import { runHypChain } from "./lib.ts";
-import { buildPrompt } from "../session.ts";
+import { createWakeQueue, electVerifyCandidates, runHypChain, runVerifyConsumer } from "./lib.ts";
+import { buildPrompt, forkFromLabel } from "../session.ts";
 import { monitorState } from "../monitor-state.ts";
-import { hypIds, readHyp, updateHyp } from "../tools/hyp.ts";
-import { readFinding } from "../tools/finding.ts";
+import { hypIds, updateHyp } from "../tools/hyp.ts";
 import { readSandboxState } from "../tools/sandbox.ts";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -58,7 +57,7 @@ const liteWorkflow = defineStagedWorkflow({
 
   stages(ctx) {
     const chainK = ctx.params.chain_filter ? Number(ctx.params.chain_filter) : Infinity;
-    const chainConc = Math.max(1, Number(ctx.params.chain_concurrency || "3"));
+    const chainConc = Math.max(1, Number(ctx.params.chain_concurrency || ctx.params.model_concurrency || "3"));   // 默认跟模型容量（fish 09-21：静态验证只受模型容量限；dv 另受沙箱池限）
     const out: StageDef[] = [];
 
     // ---- 执行器接线（fish 09-15）：容量=外部供给真闸门；池=需求组织；chains 派发按 verify 池并发 ----
@@ -70,6 +69,7 @@ const liteWorkflow = defineStagedWorkflow({
     const huntPool = exec.declarePool("hunt", { concurrency: 1, locked: true, priority: 30, needs: ["model"] });
     const verifyPool = exec.declarePool("verify", { concurrency: chainConc, priority: 10, needs: ["model"] });
     const sandboxPool = exec.declarePool("sandbox", { concurrency: 1, priority: 20, needs: ["sandbox", "model"] });
+    const wakeups = createWakeQueue();   // hunt ∥ verify 事件唤醒（task.end / 轮末 / 收尾；fish 09-21）
     monitorState.attachExecutor(exec);   // 观察台/监控台数据源 = executor.stats()
 
     // ---- init 三段 ----
@@ -105,8 +105,10 @@ const liteWorkflow = defineStagedWorkflow({
       } finally { s0.close(); }
     } });
 
-    // ---- hunt（单阶段多轮；fish 09-11 定稿见文件头注释）----
-    out.push({ name: "hunt", run: async (s) => {
+    // ---- hunt（单阶段多轮；fish 09-11 定稿见文件头注释；与 verify 消费并行，fish 09-21）----
+    out.push({ name: "hunt", parallelGroup: "audit-loop", run: async (s) => {
+      (s.state.data as Record<string, unknown>).huntSettled = false;   // run 级标志：重跑 hunt 时清掉上次遗留（否则并行 chains 会立刻误判收尾）
+      s.save();
       const s0 = await s.openSession("init", "init-host", { binding: { tag: "hunt" } });
       try {
         // 整个多轮 hunt = hunt 池的一个长任务（锁 1，全程持 1 份模型许可）
@@ -178,72 +180,72 @@ const liteWorkflow = defineStagedWorkflow({
             break;
           }
           d.huntRound = r0; d.huntZeroStreak = zeroStreak; d.huntLastBig = lastBig; s.save();
+          wakeups.push();   // 轮末唤醒：新 HYP 已落盘，消费侧立即开工
         }
         const sigmaEnd = fresh ? [] : [...(lastBig ? [`Σhunt1-${lastBig}`] : []),
           ...Array.from({ length: ((d.huntRound as number | undefined) ?? 0) - lastBig }, (_, i) => `Σhunt${lastBig + i + 1}`)];
         s0.mark(`hunt-end[init${sigmaEnd.length ? "," + sigmaEnd.join(",") : ""}][+${hypIds(ctx.workdir).length}HYP]`);
         await s0.execCommand("/coverage-record off");   // 关闭记录并落盘（09-20 解耦）
         }, { tag: "hunt" });
-      } finally { s0.close(); }
+      } finally {
+        s0.close();
+        (s.state.data as Record<string, unknown>).huntSettled = true;   // 上游落定（含失败路径）：消费侧收干后退出
+        s.save();
+        wakeups.push();
+      }
     } });
 
-    // ---- HYP 链（system/hyp 状态驱动：未办结且未产出 finding 的 HYP 派发；fork 自出生轮末梢+启动 compact）----
-    out.push({ name: "chains", run: async (s) => {
-      const init = await s.openSession("init", "init-host", { binding: { tag: "init" } });
+    // ---- verify 消费（system/hyp 状态驱动；与 hunt 并行、事件驱动——fish 09-21「下游消费优先」）----
+    out.push({ name: "chains", parallelGroup: "audit-loop", run: async (s) => {
+      const sessionFile = (s.state.sessions as Record<string, string>).init;
+      // 上游落定：hunt 不在本 run / 已收尾（huntSettled）/ 状态已是 done|failed
+      const settled = (): boolean =>
+        !s.selected.includes("hunt")
+        || !!(s.state.data as Record<string, unknown>).huntSettled
+        || s.state.stages.hunt === "done"
+        || s.state.stages.hunt === "failed";
+      // 动态门槛可见性（fail-closed 收口）：沙箱状态未知时明确告警，不静默（09-17 ev 静默缺陷教训）
+      if (ctx.params.sandbox_cfg && readSandboxState(ctx.workdir).status === "unknown") {
+        ctx.report("⚠ 沙箱状态未知（unknown）——动态链将自行探测并回报 sandbox；请确认 build 阶段已执行 sandbox report");
+      }
+      const unsub = exec.on((e) => { if (e.type === "task.end") wakeups.push(); });   // 释放槽位 → 唤醒
       try {
-        const roundHyps = (s.state.data.roundHyps ?? {}) as Record<string, string[]>;
-        const roundSigma = (s.state.data.roundSigma ?? {}) as Record<string, string[]>;
-        // 电选（chain_filter 每轮前 K 条；已办结/已产出 finding 跳过，单步重试幂等）
-        const elected: Array<{ id: string; fork: string; ing: string }> = [];
-        for (const [rn, files] of Object.entries(roundHyps)) {
-          const r0 = Number(rn.replace("hunt", ""));
-          const sig = roundSigma[rn] ?? [];
-          const ing = `Σ(init${sig.length ? "," + sig.join(",") : ""},h${r0})`;
-          for (const f of files.slice(0, chainK)) {
-            const id = f.replace(/\.(md|json)$/, "");
-            const rec = readHyp(ctx.workdir, id);
-            if (!rec) { ctx.report(`电选跳过（HYP 记录缺失）：${id}`); continue; }
-            if (rec.status === "closed" || rec.conclusion === "refuted") continue;   // 已办结（含 refuted）
-            if (readFinding(ctx.workdir, id.replace(/^HYP-/, "BUG-"))) continue;     // 已产出 finding（confirmed）
-            elected.push({ id, fork: `${rn}-done`, ing });
-          }
-        }
-        // research（及非轮次来源）的 HYP：出生点是 research-done，同样进研判（fish 09-20：research 可调用 hyp）
-        const researchIds = hypIds(ctx.workdir).filter((idd) => (readHyp(ctx.workdir, idd)?.tag ?? "").startsWith("research"));
-        for (const id of researchIds.slice(0, chainK)) {
-          const rec = readHyp(ctx.workdir, id);
-          if (!rec) continue;
-          if (rec.status === "closed" || rec.conclusion === "refuted") continue;
-          if (readFinding(ctx.workdir, id.replace(/^HYP-/, "BUG-"))) continue;
-          if (elected.some((e2) => e2.id === id)) continue;
-          // fork 自 hunt-end（压缩后的安全点；research-done 在压缩区间内，fork 会丢 Σ(init) 摘要——replay 实踩）
-          elected.push({ id, fork: "hunt-end", ing: "Σ(init)" });
-        }
-        // 动态门槛可见性（fail-closed 收口）：沙箱状态未知时明确告警，不静默（09-17 ev 静默缺陷教训）
-        if (ctx.params.sandbox_cfg && readSandboxState(ctx.workdir).status === "unknown") {
-          ctx.report("⚠ 沙箱状态未知（unknown）——动态链将自行探测并回报 sandbox；请确认 build 阶段已执行 sandbox report");
-        }
-        // 派发前置 running（崩溃后下次运行按未办结重选；办结以裁决回写为准）
-        for (const e of elected) updateHyp(ctx.workdir, e.id, { status: "running" });
-        let done = 0, stopped = 0;
-        await Promise.all(elected.map(async (meta) => {
-          for (let attempt = 1; attempt <= 3; attempt++) {
-            try {
-              await verifyPool.submit(
-                () => runHypChain(ctx, init, meta.id, { forkPoint: meta.fork, birthIngredients: meta.ing, sandboxPool }),
-                { tag: `${meta.id}#a${attempt}` },
-              );
-              done++;
-              return;
-            } catch (e) {
-              const msg = String(e).slice(0, 140);
-              if (attempt >= 3) { stopped++; ctx.report(`链异常×3，停派留待下次：${meta.id} ${msg}`); return; }
-              ctx.report(`链异常（第 ${attempt} 次，将重派）：${meta.id} ${msg}`);
+        const r = await runVerifyConsumer({
+          candidates: () => electVerifyCandidates(ctx, s.state.data, { chainK, includeResearch: settled() }),
+          markRunning: (ids) => { for (const id of ids) updateHyp(ctx.workdir, id, { status: "running" }); },
+          runOne: async (c) => {
+            for (let attempt = 1; attempt <= 3; attempt++) {
+              try {
+                await verifyPool.submit(
+                  () => runHypChain(ctx, c.id, {
+                    forkPoint: c.fork, birthIngredients: c.ing, sandboxPool,
+                    forkAtLabel: (label, newId) => {
+                      if (!sessionFile) throw new Error("fork 失败：run 状态缺 init 会话文件");
+                      return forkFromLabel({ ...ctx, runId: s.state.runId }, sessionFile, label, newId, { agent: "hyp-chain", binding: { hypId: c.id } });
+                    },
+                  }),
+                  { tag: `${c.id}#a${attempt}` },
+                );
+                return "done";
+              } catch (e) {
+                const msg = String(e).slice(0, 140);
+                if (attempt >= 3) { ctx.report(`verify 异常×3，停派留待下次：${c.id} ${msg}`); return "stopped"; }
+                ctx.report(`verify 异常（第 ${attempt} 次，将重派）：${c.id} ${msg}`);
+              }
             }
-          }
-        }));
-        ctx.report(`chains 阶段：派发 ${elected.length} 条链（完成 ${done}，停派 ${stopped}）`);
-      } finally { init.close(); }
+            return "stopped";
+          },
+          slotsFree: () => {
+            const p = exec.stats().pools.find((x) => x.name === "verify");
+            return p ? Math.max(0, p.concurrency - p.running.length) : 0;
+          },
+          settled,
+          wakeup: () => wakeups.pop(),
+          notify: () => wakeups.push(),
+          report: (m) => ctx.report(m),
+        });
+        ctx.report(`verify 阶段收工：派发 ${r.dispatched}（完成 ${r.done}，停派 ${r.stopped}）`);
+      } finally { unsub(); }
     } });
 
     return out;

@@ -110,6 +110,42 @@ function findTaskStart(sm: SessionManager, preLeaf: string | null, endEntry?: st
   }
   return found;
 }
+/**
+ * 从会话文件的标记处分叉出独立会话（forkFromLabel）。
+ * 每次调用都从磁盘重读当前文件——并行模式下 hunt 仍在追加会话，旧 handle 的内存状态看不到新标记（fish 09-21）。
+ * 分支点语义与 handle.fork 一致：定位标记 → 叶子上溯跳过 label → createBranchedSession → 显式落盘。
+ */
+export async function forkFromLabel(
+  ctx: SessionCtx,
+  sessionFile: string,
+  label: string,
+  newId: string,
+  o?: { agent?: string; binding?: ToolBinding },
+): Promise<SessionHandle> {
+  const sm = SessionManager.open(sessionFile);
+  const entries = sm.getEntries();
+  const entry = entries.find((e) => sm.getLabel(e.id) === label)
+    ?? entries.find((e) => (sm.getLabel(e.id) ?? "").startsWith(label));   // 前缀匹配（成分表标记）
+  if (!entry) throw new Error(`fork 失败：会话树上没有标记 "${label}"`);
+  const byId = new Map(entries.map((e) => [e.id, e as unknown as { id: string; type?: string; parentId?: string | null }]));
+  let forkLeaf: string = entry.id;
+  let g = 0;
+  while (g++ < 1000) {
+    const e = byId.get(forkLeaf);
+    if (!e || e.type !== "label") break;
+    forkLeaf = e.parentId ?? "";
+  }
+  if (!forkLeaf) throw new Error("fork 失败：叶子上溯未找到内容条目");
+  const path = sm.createBranchedSession(forkLeaf);
+  if (!path) throw new Error("fork 失败：createBranchedSession 未返回路径");
+  if (!existsSync(path)) (sm as unknown as { _rewriteFile?: () => void })._rewriteFile?.();
+  if (!existsSync(path)) throw new Error("fork 失败：分支文件未生成");
+  lineage(ctx.workdir, ctx.runId
+    ? { run: ctx.runId, id: newId, action: "fork", label, file: path }
+    : { id: newId, action: "fork", label, file: path });
+  return startSession(ctx, { agent: o?.agent ?? "hyp-chain", id: newId, binding: o?.binding, sessionFile: path });
+}
+
 async function createSession(ctx: SessionCtx, agentName: string, binding: ToolBinding, sessionManager?: SessionManager): Promise<{ sess: AgentSession; spec: NodeSpec; customTools: ToolDefinition[] }> {
   const spec: NodeSpec | undefined = NODES[agentName];
   if (!spec) throw new Error(`未知节点: ${agentName}（nodes.ts 未定义）`);

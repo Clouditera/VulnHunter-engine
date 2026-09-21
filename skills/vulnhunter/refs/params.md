@@ -9,7 +9,7 @@
 | skip_ev | 无 | 置 "1"=显式跳过 ev-assess：只做研判与沙箱复现，不做影响评估 |
 | rounds | 无 | hunt 轮次显式封顶（默认无上限——停轮=覆盖≥阈值 且 连续 x 轮零新增） |
 | chain_filter | 全部 | 每轮前 K 条 HYP 走研判链，限成本用（如 "2"） |
-| chain_concurrency | 3 | 研判链并发数 |
+| chain_concurrency | 默认＝model_concurrency（未设时 3） | verify 并发数（缺省跟模型容量；含 dv 时另受沙箱池限） |
 | model_concurrency | 3 | 模型容量许可（并发模型调用上限），限流用 |
 | hunt_coverage_threshold | 90 | hunt 停轮的靶内覆盖率阈值（%） |
 | hunt_zero_rounds | 3 | 停轮所需连续零新增轮数 x（覆盖达标后，还需连续 x 轮无新 HYP 才停） |
