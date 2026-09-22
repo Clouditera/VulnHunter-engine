@@ -43,3 +43,7 @@ pi ...
 - `PUT` 或 `PATCH /v1/runs/{runId}/agents/{agentKey}/model-config`：body 是该 agent 的完整快照，可带 `baseVersion`；版本冲突 `409`，模型/凭证校验失败 `422`。
 
 HTTP 默认绑定 `127.0.0.1`。绑定非本机地址必须配置 `VULNHUNTER_CONTROL_TOKEN`；生产环境仍应由 HTTPS/mTLS 代理承载跨主机访问。密钥只进入对应 agent 的内存 credential store，不写模型文件、run 参数或日志。
+
+## pi 0.87 会话边界
+
+runner 的会话上下文以 `SessionManager` 为唯一事实源。workflow 的分支摘要落树后调用 `session.refreshContext()` 刷新检查缓存，不再写 `session.agent.state.messages`；恢复、`goto`、`fork` 和后续 provider 请求都通过 `SessionManager` 读取规范化上下文。

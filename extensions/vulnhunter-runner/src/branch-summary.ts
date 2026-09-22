@@ -32,7 +32,8 @@ interface SMLike {
   getLabel(id: string): string | undefined;
   branchWithSummary(targetId: string, summary: string, details?: unknown, fromHook?: boolean, usage?: unknown): string;
   appendLabelChange(entryId: string, label: string): void;
-  buildSessionContext(): { messages: unknown[] };
+  /** Refresh AgentSession's inspection cache from the canonical SessionManager context. */
+  refreshContext(): void;
 }
 
 /** 从叶子沿 parentId 走到 stopId，收集区间内的条目（含叶子与起处本体，不含挂载点本身） */
@@ -180,8 +181,8 @@ export async function branchSummarize(
 
   const summaryId = sm.branchWithSummary(attachId, summary, { guide: opts.guide?.slice(0, 300) }, true, j.usage);
   if (opts.summaryLabel) sm.appendLabelChange(summaryId, opts.summaryLabel);
-  // 同步 agent 内存态（与 pi navigateTree 末尾一致）
-  const agentState = (sess as unknown as { agent?: { state?: { messages?: unknown[] } } }).agent?.state;
-  if (agentState) agentState.messages = sm.buildSessionContext().messages;
+  // 0.87 起 SessionManager 是 provider context 的唯一事实源；不要直接写 agent.state.messages。
+  // refreshContext() 只刷新 AgentSession 的只读/检查缓存，下一次请求仍从 SessionManager 构建上下文。
+  (sess as unknown as { refreshContext?: () => void }).refreshContext?.();
   return { summaryId, usage: j.usage, targetId: target.id, attachId, fromId, coveredIds: slice.map((e) => String(e.id)) };
 }

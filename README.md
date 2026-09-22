@@ -76,4 +76,4 @@ cd /path/to/项目B && pia     # 会话按 cwd 自动隔离（sessions/<目录�
 
 ## 依赖
 
-- pi CLI（≥ 0.83）；其余随仓库自带（pi-context/pi-subagents 为 submodule，自有扩展零依赖）
+- pi CLI（≥ 0.87.0）；其余随仓库自带（pi-context/pi-subagents 为 submodule，自有扩展零依赖）
