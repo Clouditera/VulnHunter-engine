@@ -1,0 +1,45 @@
+# 模型控制面
+
+runner 的模型控制分两层，但只有一份语义：纯引擎直接调用 `WorkflowRunnerEngine`，SaaS 分进程时调用它的 HTTP 适配器。HTTP 不是 pi 的接口；pi 只在 runner 内部消费已经归一化的 agent 快照。
+
+## 纯引擎
+
+```ts
+const engine = new WorkflowRunnerEngine({
+  engineDir,
+  loadWorkflow: async (name) => workflows.get(name),
+});
+
+const run = await engine.start({
+  workflow: "audit-lite",
+  target: "/workspaces/sample",
+  params: { rounds: "4" },
+  agents: {
+    init:   { version: 1, source: "local",  selection: { providerId: "acme", modelId: "reasoner", thinking: "high" } },
+    hunt:   { version: 1, source: "local",  selection: { providerId: "acme", modelId: "fast", thinking: "medium" } },
+    verify: { version: 1, source: "inline", selection: { providerId: "tenant-a", modelId: "reasoner", thinking: "high" }, providers: [/* 完整 provider/model */], credentials: [/* 内存凭证 */] },
+  },
+});
+await engine.replaceAgentModel(run.runId, "verify", nextSnapshot, 1);
+```
+
+`source=local` 只传选择，provider/model 和凭证由 `engineDir/models.json`、`auth.json` 提供；`source=inline` 必须传该 agent 的完整 providers/models/credentials 快照。每个 agent 有独立 `ModelRuntime`，会话创建时注入同一 runtime；全量替换先校验候选，再在原 runtime 内替换，失败不污染旧配置。一个 run 内 `source` 保持不变：local run 的切换目标仍来自本地文件，inline run 的切换请求必须带新的完整快照。
+
+## HTTP
+
+扩展进程默认不监听控制端口。需要 SaaS 分进程调用时设置：
+
+```sh
+VULNHUNTER_CONTROL=1 \
+VULNHUNTER_CONTROL_PORT=4200 \
+VULNHUNTER_CONTROL_TOKEN='由部署系统注入' \
+pi ...
+```
+
+接口：
+
+- `POST /v1/runs`：body `{ workflow, target, params?, agents? }`，返回 `202 { runId }`。
+- `GET /v1/runs/{runId}`：查询状态；凭证只返回 `<redacted>`。
+- `PUT` 或 `PATCH /v1/runs/{runId}/agents/{agentKey}/model-config`：body 是该 agent 的完整快照，可带 `baseVersion`；版本冲突 `409`，模型/凭证校验失败 `422`。
+
+HTTP 默认绑定 `127.0.0.1`。绑定非本机地址必须配置 `VULNHUNTER_CONTROL_TOKEN`；生产环境仍应由 HTTPS/mTLS 代理承载跨主机访问。密钥只进入对应 agent 的内存 credential store，不写模型文件、run 参数或日志。

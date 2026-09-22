@@ -21,6 +21,7 @@ import { listFindings } from "./src/tools/finding.ts";
 import { effectiveModelSpec, MODEL_POOLS, parseModelSpec, readModelConfig, writeModelConfig, type ModelPool } from "./src/model-config.ts";
 import { createMonitorComponent } from "./src/monitor.ts";
 import { ensureWebService } from "./src/web.ts";
+import { ensureControlService, WorkflowRunnerEngine } from "./src/control.ts";
 
 const ENGINE_DIR = process.env.PI_CODING_AGENT_DIR ?? resolve(__dirname, "..", "..");
 const WORKFLOWS_DIR = resolve(__dirname, "src", "workflows");   // 代码资产集中 src/（fish 09-11）
@@ -81,6 +82,14 @@ export default function (pi: ExtensionAPI) {
       } catch (e) { loadErrors.push(`${f}: ${String(e).split("\n")[0].slice(0, 160)}`); }
     }
   }
+
+  // 可选控制面：HTTP 只是同一纯 JS 引擎 API 的适配器，默认不监听端口。
+  const controlEngine = new WorkflowRunnerEngine({
+    engineDir: ENGINE_DIR,
+    cwd: process.cwd(),
+    loadWorkflow: async (name) => { await loadWorkflows(); return workflows.get(name); },
+  });
+  ensureControlService(controlEngine);
 
   pi.registerTool(defineTool({
     name: "vulnhunter",

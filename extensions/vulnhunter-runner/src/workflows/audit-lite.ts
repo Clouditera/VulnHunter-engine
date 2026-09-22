@@ -92,13 +92,21 @@ const liteWorkflow = defineStagedWorkflow({
     const modelWatch = createModelFileWatch({ workdir: ctx.workdir, onChanged: () => modelSwitch.apply() });
     const registerLive = (h: SessionHandle, pool: () => "init" | "hunt" | "verify", applied: string | undefined): (() => void) => modelSwitch.register(h, pool, applied);
     const ensureModelWatch = (): (() => void) => modelWatch.acquire();
-    // 阶段复用：开/复活本阶段池的会话（按池模型注入 + 登记热切换 + 启动模型监听）
+    // 阶段复用：local/file 模式走旧监听；inline/纯引擎 registry 模式把稳定 runtime 传进 session。
     const pooledOpen = async (s: import("../runtime.ts").StageCtx, pool: "init" | "hunt", tag: string, o?: { fresh?: boolean }) => {
-      const unwatch = ensureModelWatch();
+      const registryMode = !!s.modelRegistry?.has(pool);
+      const unwatch = registryMode ? () => undefined : ensureModelWatch();
       try {
-        const spec = modelSpecFor(pool);
-        const h = await s.openSession("init", "init-host", { binding: { tag }, ...(o?.fresh ? { fresh: true } : {}), ...(spec ? { modelSpec: spec } : {}) });
-        const unreg = registerLive(h, () => pool, spec);
+        const spec = registryMode ? undefined : modelSpecFor(pool);
+        const h = await s.openSession("init", "init-host", {
+          binding: { tag },
+          ...(o?.fresh ? { fresh: true } : {}),
+          ...(spec ? { modelSpec: spec } : {}),
+          ...(registryMode ? { modelAgentKey: pool } : {}),
+        });
+        // AgentModelRegistry registers the host inside startSession. Do not also
+        // register it in the legacy model.json watcher.
+        const unreg = registryMode ? () => undefined : registerLive(h, () => pool, spec);
         return { h, done: () => { unreg(); unwatch(); } };
       } catch (e) { unwatch(); throw e; }
     };
@@ -231,7 +239,8 @@ const liteWorkflow = defineStagedWorkflow({
     // ---- verify 消费（system/hyp 状态驱动；与 hunt 并行、事件驱动——fish 09-21「下游消费优先」）----
     out.push({ name: "chains", parallelGroup: "audit-loop", run: async (s) => {
       const sessionFile = (s.state.sessions as Record<string, string>).init;
-      const unwatch = ensureModelWatch();   // 链窗口延续模型监听（hunt 结束后监听仍有效）
+      const registryMode = !!s.modelRegistry?.has("verify");
+      const unwatch = registryMode ? () => undefined : ensureModelWatch();   // registry 模式由稳定 runtime 负责热切换；legacy 模式延续文件监听
       // 上游落定：hunt 不在本 run / 已收尾（huntSettled）/ 状态已是 done|failed
       const settled = (): boolean =>
         !s.selected.includes("hunt")
@@ -253,11 +262,16 @@ const liteWorkflow = defineStagedWorkflow({
                 await verifyPool.submit(
                   () => runHypChain(ctx, c.id, {
                     forkPoint: c.fork, birthIngredients: c.ing, acquireSandbox,
-                    registerLive: (h) => registerLive(h, () => "verify", modelSpecFor("verify")),
+                    ...(registryMode ? {} : { registerLive: (h: SessionHandle) => registerLive(h, () => "verify", modelSpecFor("verify")) }),
                     forkAtLabel: (label, newId) => {
                       if (!sessionFile) throw new Error("fork 失败：run 状态缺 init 会话文件");
-                      const spec = modelSpecFor("verify");
-                      return forkFromLabel({ ...ctx, runId: s.state.runId }, sessionFile, label, newId, { agent: "hyp-chain", binding: { hypId: c.id }, ...(spec ? { modelSpec: spec } : {}) });
+                      const spec = registryMode ? undefined : modelSpecFor("verify");
+                      return forkFromLabel({ ...ctx, runId: s.state.runId }, sessionFile, label, newId, {
+                        agent: "hyp-chain",
+                        binding: { hypId: c.id },
+                        ...(spec ? { modelSpec: spec } : {}),
+                        ...(registryMode ? { modelAgentKey: "verify" } : {}),
+                      });
                     },
                   }),
                   { tag: `${c.id}#a${attempt}` },
