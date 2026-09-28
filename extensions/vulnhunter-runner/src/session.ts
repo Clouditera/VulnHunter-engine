@@ -1,3 +1,5 @@
+import { nodeRoot, findTaskStart } from "./session-helpers.ts";
+export { nodeRoot, loadTaskBook, buildPrompt } from "./session-helpers.ts";
 /**
  * SessionService：pi 会话树的程序化封装（灵活性框架核心）。
  *
@@ -12,7 +14,7 @@
  */
 
 import {
-  createAgentSession, DefaultResourceLoader, SettingsManager, SessionManager, parseFrontmatter,
+  createAgentSession, DefaultResourceLoader, SettingsManager, SessionManager,
   type AgentSession, type AgentSessionEvent, type CreateAgentSessionOptions, type ModelRuntime, type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { existsSync, readFileSync } from "node:fs";
@@ -80,89 +82,6 @@ export interface SessionHandle {
   state(): SessionState;
   /** 释放资源 */
   close(): void;
-}
-
-/** 读 tasks/<name>.md 正文（兼容残留 frontmatter，剥掉） */
-/** 节点资源根（自包含扩展目录：tasks/ skills/ AGENTS.md node-ext/ 都在这下面，fish 09-11 收纳） */
-export function nodeRoot(engineDir: string): string { return join(engineDir, "extensions", "vulnhunter-runner"); }
-
-export function loadTaskBook(engineDir: string, name: string): string {
-  const raw = readFileSync(join(nodeRoot(engineDir), "tasks", `${name}.md`), "utf-8");
-  return parseFrontmatter<Record<string, unknown>>(raw).body.trim();
-}
-
-/** 定稿 user prompt 组装：参数头部 + 任务书 + 任务说明句（fish 09-02 裁定） */
-export function buildPrompt(ctx: SessionCtx, agentName: string, task: string, extra?: string): string {
-  const head = [
-    `工作区根目录：${ctx.workdir}（任务里的产物相对路径——knowledge/ findings/ system/ 等——都以它为基准）`,
-    `引擎扩展根目录：${nodeRoot(ctx.engineDir)}（任务书提到的 skills/ 等引擎侧相对路径以它为基准，不是目标项目目录）`,
-    ctx.params.sandbox_cfg ? `沙箱连接配置：${ctx.params.sandbox_cfg}` : "",
-    ctx.params.vuln_focus ? `漏洞关注方向：${ctx.params.vuln_focus}` : "",
-    ctx.params.output_lang ? `输出语言：${ctx.params.output_lang}` : "输出语言：zh-CN",
-  ].filter(Boolean);
-  return [
-    head.length ? "当前审计任务情况说明：\n" + head.join("\n") : "",
-    loadTaskBook(ctx.engineDir, agentName),
-    `接下来开始执行 ${task}${extra ? "\n" + extra : ""}`,
-  ].filter(Boolean).join("\n\n");
-}
-
-/** 从 end 沿 parentId 上溯到 preLeaf，取链上最早的用户消息条目 = 任务起点（重试轮取首个 prompt） */
-function findTaskStart(sm: SessionManager, preLeaf: string | null, endEntry?: string): string | undefined {
-  const byId = new Map(sm.getEntries().map((e) => [e.id, e]));
-  let cur: string | null = endEntry ?? null;
-  let found: string | undefined;
-  let guard = 0;
-  while (cur && cur !== preLeaf && guard++ < 200000) {
-    const e = byId.get(cur);
-    if (!e) break;
-    const m = e as unknown as { type?: string; message?: { role?: string } };
-    if (m.type === "message" && m.message?.role === "user") found = e.id;   // 持续覆写 → 最后留下最早的一条
-    cur = (e.parentId as string | null) ?? null;
-  }
-  return found;
-}
-/**
- * 从会话文件的标记处分叉出独立会话（forkFromLabel）。
- * 每次调用都从磁盘重读当前文件——并行模式下 hunt 仍在追加会话，旧 handle 的内存状态看不到新标记（fish 09-21）。
- * 分支点语义与 handle.fork 一致：定位标记 → 叶子上溯跳过 label → createBranchedSession → 显式落盘。
- */
-export async function forkFromLabel(
-  ctx: SessionCtx,
-  sessionFile: string,
-  label: string,
-  newId: string,
-  o?: { agent?: string; binding?: ToolBinding; modelSpec?: string; modelAgentKey?: string },
-): Promise<SessionHandle> {
-  const sm = SessionManager.open(sessionFile);
-  const entries = sm.getEntries();
-  const entry = entries.find((e) => sm.getLabel(e.id) === label)
-    ?? entries.find((e) => (sm.getLabel(e.id) ?? "").startsWith(label));   // 前缀匹配（成分表标记）
-  if (!entry) throw new Error(`fork 失败：会话树上没有标记 "${label}"`);
-  const byId = new Map(entries.map((e) => [e.id, e as unknown as { id: string; type?: string; parentId?: string | null }]));
-  let forkLeaf: string = entry.id;
-  let g = 0;
-  while (g++ < 1000) {
-    const e = byId.get(forkLeaf);
-    if (!e || e.type !== "label") break;
-    forkLeaf = e.parentId ?? "";
-  }
-  if (!forkLeaf) throw new Error("fork 失败：叶子上溯未找到内容条目");
-  const path = sm.createBranchedSession(forkLeaf);
-  if (!path) throw new Error("fork 失败：createBranchedSession 未返回路径");
-  if (!existsSync(path)) (sm as unknown as { _rewriteFile?: () => void })._rewriteFile?.();
-  if (!existsSync(path)) throw new Error("fork 失败：分支文件未生成");
-  lineage(ctx.workdir, ctx.runId
-    ? { run: ctx.runId, id: newId, action: "fork", label, file: path }
-    : { id: newId, action: "fork", label, file: path });
-  return startSession(ctx, {
-    agent: o?.agent ?? "hyp-chain",
-    id: newId,
-    binding: o?.binding,
-    sessionFile: path,
-    modelSpec: o?.modelSpec,
-    modelAgentKey: o?.modelAgentKey,
-  });
 }
 
 async function createSession(
@@ -525,3 +444,47 @@ export async function startSession(ctx: SessionCtx, opts: {
   ln({ id, action: "start", agent: opts.agent, resumed: !!opts.sessionFile, file: sessFile });
   return handle;
 }
+
+/**
+ * 从会话文件的标记处分叉出独立会话（forkFromLabel）。
+ * 每次调用都从磁盘重读当前文件——并行模式下 hunt 仍在追加会话，旧 handle 的内存状态看不到新标记（fish 09-21）。
+ * 分支点语义与 handle.fork 一致：定位标记 → 叶子上溯跳过 label → createBranchedSession → 显式落盘。
+ */
+export async function forkFromLabel(
+  ctx: SessionCtx,
+  sessionFile: string,
+  label: string,
+  newId: string,
+  o?: { agent?: string; binding?: ToolBinding; modelSpec?: string; modelAgentKey?: string },
+): Promise<SessionHandle> {
+  const sm = SessionManager.open(sessionFile);
+  const entries = sm.getEntries();
+  const entry = entries.find((e) => sm.getLabel(e.id) === label)
+    ?? entries.find((e) => (sm.getLabel(e.id) ?? "").startsWith(label));   // 前缀匹配（成分表标记）
+  if (!entry) throw new Error(`fork 失败：会话树上没有标记 "${label}"`);
+  const byId = new Map(entries.map((e) => [e.id, e as unknown as { id: string; type?: string; parentId?: string | null }]));
+  let forkLeaf: string = entry.id;
+  let g = 0;
+  while (g++ < 1000) {
+    const e = byId.get(forkLeaf);
+    if (!e || e.type !== "label") break;
+    forkLeaf = e.parentId ?? "";
+  }
+  if (!forkLeaf) throw new Error("fork 失败：叶子上溯未找到内容条目");
+  const path = sm.createBranchedSession(forkLeaf);
+  if (!path) throw new Error("fork 失败：createBranchedSession 未返回路径");
+  if (!existsSync(path)) (sm as unknown as { _rewriteFile?: () => void })._rewriteFile?.();
+  if (!existsSync(path)) throw new Error("fork 失败：分支文件未生成");
+  lineage(ctx.workdir, ctx.runId
+    ? { run: ctx.runId, id: newId, action: "fork", label, file: path }
+    : { id: newId, action: "fork", label, file: path });
+  return startSession(ctx, {
+    agent: o?.agent ?? "hyp-chain",
+    id: newId,
+    binding: o?.binding,
+    sessionFile: path,
+    modelSpec: o?.modelSpec,
+    modelAgentKey: o?.modelAgentKey,
+  });
+}
+

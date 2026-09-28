@@ -6,4 +6,4 @@ set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [[ -f "$DIR/.env" ]]; then set -a; source "$DIR/.env"; set +a; fi
 export PI_CODING_AGENT_DIR="$DIR"
-exec pi "$@"   # SYSTEM.md 由 pi 按约定自动加载，无需 --append-system-prompt
+exec "$DIR/node_modules/.bin/pi" "$@"   # SYSTEM.md 由 pi 按约定自动加载，无需 --append-system-prompt
