@@ -10,5 +10,5 @@ export { WorkflowRunnerEngine, ControlError } from "./control.ts";
 export type { StartRunRequest, RunnerRunView, RunnerRunStatus } from "./control.ts";
 export type { AgentModelSnapshot, AgentModelSelection } from "./agent-model.ts";
 
-export { AgentModelRuntime } from "./agent-model.ts";
+export { AgentModelRuntime, assertModelSelection } from "./agent-model.ts";
 export { sessionSettings } from "./session-settings.ts";

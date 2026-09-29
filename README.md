@@ -47,6 +47,14 @@ const result = await runner.wait(run.runId);
 
 包名：`@vulnhunter/engine-runner`（private，不发 npm）。Community/Enterprise 用 submodule 固定本仓提交，并在自己的 pnpm workspace 中包含 runner 和节点扩展目录；以 `workspace:*` 建依赖，不穿透相对路径引用 `src/`。
 
-当前 exports：默认 Runner API、`/workflow` 阶段编排 API、`/extension` pi 工具入口、`/package.json`。平台对话角色不得自动加载 `/extension` 来绕过平台任务启动入口。
+当前 exports：默认 Runner/模型会话 API、`/workflow` 阶段编排 API、`/extension` pi 工具入口、`/model-provider` 原生内存 provider 适配及 `/package.json`。平台显式装配扩展；此处不改变现有任务启动、阶段调度和 Task/Run 归属。
 
 独立 TUI 的 HTTP 观察界面与会话 HTML 渲染分别放在 `web.ts`、`monitor-page.ts`、`monitor-session.ts`，不混在执行 API 中。API 本身不要求启动任何观察服务。
+
+## 平台模型配置
+
+平台使用 `AgentModelRuntime` 的 `inline` 快照：provider 实例 ID、多个模型定义、内存凭证及精确选择。原生 Pi provider 直接消费 key/headers 字符串，不经过 `models.json` 的表达式解释器。
+
+装配 `/extension` 时显式提供 `getModelSnapshot`，使 init/hunt/verify 从同一个已提交父快照建立独立 SDK runtime。后续主对话配置不会无意改动已开始任务；任务模型变更走自己的 registry。`.vulnforge/system/model.json` 只记录任务的模型选择引用，绝不是 provider/凭证来源。独立 CLI 的本地配置入口仍与平台隔离。
+
+子会话的设置保留 Pi 的 global/project 合并规则，但 SDK 更新默认选择时只写内存。分支摘要使用所属会话的 SDK runtime、模型和思考档，保留原来的闭区间、挂载位置、摘要结构和 32768 输出预算，不再读 key 文件或强制开启思考。所有明确的模型/思考选择均检查 SDK 实际值，不允许静默代选或降档。

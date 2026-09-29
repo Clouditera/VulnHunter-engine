@@ -1,4 +1,5 @@
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import { join } from "node:path";
 import { createModelRuntime, registerModelProvider, type ModelDefinition, type ProviderDefinition } from "./model-provider.ts";
 
@@ -11,7 +12,8 @@ export interface AgentCredentialDefinition {
   apiKey: string;
 }
 
-export type AgentThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+export const AGENT_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+export type AgentThinkingLevel = typeof AGENT_THINKING_LEVELS[number];
 
 export interface AgentModelSelection {
   providerId: string;
@@ -30,6 +32,16 @@ export interface AgentModelSnapshot {
   selection: AgentModelSelection;
   providers?: AgentProviderDefinition[];
   credentials?: AgentCredentialDefinition[];
+}
+
+export function assertModelSelection(
+  session: { model?: { provider: string; id: string }; thinkingLevel: string },
+  selection: AgentModelSelection,
+): void {
+  if (session.model?.provider !== selection.providerId || session.model.id !== selection.modelId
+    || (selection.thinking !== undefined && session.thinkingLevel !== selection.thinking)) {
+    throw new Error("SDK 未采用所选模型和思考档");
+  }
 }
 
 export interface AgentModelHost {
@@ -58,6 +70,12 @@ export interface ResolvedAgentModel {
   selection: AgentModelSelection;
 }
 
+function validateThinking(model: ResolvedAgentModel["model"], thinking: AgentThinkingLevel | undefined): void {
+  if (thinking !== undefined && !getSupportedThinkingLevels(model).includes(thinking)) {
+    throw new Error(`模型 ${model.provider}/${model.id} 不支持思考档 ${thinking}`);
+  }
+}
+
 function cloneSnapshot(snapshot: AgentModelSnapshot): AgentModelSnapshot {
   return JSON.parse(JSON.stringify(snapshot)) as AgentModelSnapshot;
 }
@@ -70,7 +88,7 @@ function assertSnapshotShape(snapshot: AgentModelSnapshot): void {
   if (!s || typeof s.providerId !== "string" || !s.providerId || typeof s.modelId !== "string" || !s.modelId) {
     throw new Error("模型配置缺少 selection.providerId/modelId");
   }
-  if (s.thinking !== undefined && !["off", "minimal", "low", "medium", "high", "xhigh", "max"].includes(s.thinking)) {
+  if (s.thinking !== undefined && !AGENT_THINKING_LEVELS.includes(s.thinking)) {
     throw new Error(`不支持的 thinking level：${s.thinking}`);
   }
   if (snapshot.source === "inline") {
@@ -136,6 +154,7 @@ export class AgentModelRuntime {
     const selection = this.snapshotValue.selection;
     const model = this.runtime.getModel(selection.providerId, selection.modelId);
     if (!model) throw new Error(`模型不存在：${selection.providerId}/${selection.modelId}`);
+    validateThinking(model, selection.thinking);
     return { runtime: this.runtime, model, selection: { ...selection } };
   }
 
@@ -194,6 +213,7 @@ export class AgentModelRuntime {
     if (snapshot.source === "local") {
       const model = this.runtime.getModel(snapshot.selection.providerId, snapshot.selection.modelId);
       if (!model) throw new Error(`模型不存在：${snapshot.selection.providerId}/${snapshot.selection.modelId}`);
+      validateThinking(model, snapshot.selection.thinking);
       const auth = await this.runtime.getAuth(model);
       if (!auth) throw new Error(`provider 未配置凭证：${snapshot.selection.providerId}`);
       return this.runtime;
@@ -206,6 +226,7 @@ export class AgentModelRuntime {
     }
     const model = candidate.getModel(snapshot.selection.providerId, snapshot.selection.modelId);
     if (!model) throw new Error(`模型不存在：${snapshot.selection.providerId}/${snapshot.selection.modelId}`);
+    validateThinking(model, snapshot.selection.thinking);
     if (!(await candidate.getAuth(model))) throw new Error(`provider 未配置凭证：${snapshot.selection.providerId}`);
     return candidate;
   }

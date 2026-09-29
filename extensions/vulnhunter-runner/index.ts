@@ -19,10 +19,12 @@ import { fileURLToPath } from "node:url";
 import { workflows } from "./src/workflows/registry.ts";
 import type { WorkflowContext } from "./src/runtime.ts";
 import { listFindings } from "./src/tools/finding.ts";
-import { effectiveModelSpec, MODEL_POOLS, parseModelSpec, readModelConfig, writeModelConfig, type ModelPool } from "./src/model-config.ts";
+import { effectiveModelSpec, MODEL_POOLS, parseModelSpec, readModelConfig, seedModelConfigFromParams, writeModelConfig, type ModelPool } from "./src/model-config.ts";
 import { createMonitorComponent } from "./src/monitor.ts";
 import { ensureWebService } from "./src/web.ts";
 import { ensureControlService, WorkflowRunnerEngine } from "./src/control.ts";
+import { AgentModelRegistry, type AgentModelSnapshot } from "./src/agent-model.ts";
+import { AUDIT_MODEL_POOLS, auditModelSnapshots } from "./src/extension-models.ts";
 
 const ENGINE_DIR = process.env.PI_CODING_AGENT_DIR ?? fileURLToPath(new URL("../../", import.meta.url));
 
@@ -59,7 +61,13 @@ function renderFindings(workdir: string): string {
   return rows.length ? rows.join("\n") : "（无 findings）";
 }
 
-export default function (pi: ExtensionAPI) {
+export interface RunnerExtensionOptions {
+  /** Platform composition supplies one committed SDK-memory snapshot. Standalone CLI keeps its own local source. */
+  getModelSnapshot?: () => AgentModelSnapshot;
+}
+
+export default function (pi: ExtensionAPI, options: RunnerExtensionOptions = {}) {
+  let activeModels: { workdir: string; registry: AgentModelRegistry; parent: AgentModelSnapshot } | undefined;
   const state: RunState = { status: "idle", log: [] };
   ensureWebService();
 
@@ -95,16 +103,31 @@ export default function (pi: ExtensionAPI) {
         const poolKey = String(args.pool ?? "global") as ModelPool;
         if (!MODEL_POOLS.includes(poolKey)) bad(`未知池：${poolKey}（可用：${MODEL_POOLS.join(" / ")}）`);
         if (args.model !== undefined && String(args.model).trim()) parseModelSpec(String(args.model));   // 语法校验，出错抛教学错误
-        let cfg;
+        let cfg = readModelConfig(workdir);
+        const parent = options.getModelSnapshot?.();
+        const active = activeModels?.workdir === workdir ? activeModels : undefined;
         if (args.model !== undefined) {
-          const patch: Partial<Record<ModelPool, string>> = {};
-          patch[poolKey] = String(args.model);
+          if (parent && state.status === "running" && !activeModels) bad("任务正在初始化模型，请稍后再修改");
+          const patch: Partial<Record<ModelPool, string>> = { [poolKey]: String(args.model) };
+          if (parent && active) {
+            const next = { ...cfg };
+            if (String(args.model).trim()) next[poolKey] = String(args.model).trim(); else delete next[poolKey];
+            const pools = poolKey === "global" ? AUDIT_MODEL_POOLS.filter((pool) => !next[pool]) : [poolKey];
+            // Changing this task does not inherit an unrelated later conversation selection.
+            const snapshots = auditModelSnapshots({ ...parent, selection: active.parent.selection }, next, pools);
+            for (const [pool, snapshot] of Object.entries(snapshots)) {
+              await active.registry.replaceAgentModel(pool, { ...snapshot, version: active.registry.snapshot(pool).version + 1 });
+            }
+          }
           cfg = writeModelConfig(workdir, patch);
-        } else cfg = readModelConfig(workdir);
-        const eff = (p: ModelPool) => effectiveModelSpec(cfg, p) ?? "（settings.json 默认）";
-        const lines = MODEL_POOLS.map((p) =>
-          p === "global" ? `  global  ${cfg.global ?? "（未设）"}` : `  ${p.padEnd(7)} ${cfg[p] ?? "（未设）"}  → 生效：${eff(p)}`);
-        return ok(`模型配置（${workdir}/system/model.json）：\n${lines.join("\n")}\n\n运行中的 run：在跑会话下一轮生效，新任务（新链/新轮）直接生效；未设项走 settings.json 默认。`);
+        }
+        const format = (snapshot: AgentModelSnapshot) => `${snapshot.selection.providerId}/${snapshot.selection.modelId}${snapshot.selection.thinking ? `:${snapshot.selection.thinking}` : ""}`;
+        const eff = (pool: ModelPool) => active && pool !== "global"
+          ? format(active.registry.snapshot(pool))
+          : effectiveModelSpec(cfg, pool) ?? (parent ? format(parent) : "（本地 SDK 默认）");
+        const lines = MODEL_POOLS.map((pool) => pool === "global"
+          ? `  global  ${cfg.global ?? "（未设）"}` : `  ${pool.padEnd(7)} ${cfg[pool] ?? "（未设）"}  → 生效：${eff(pool)}`);
+        return ok(`任务模型选择：\n${lines.join("\n")}\n\n运行中变更用于后续模型请求；未指定的池继承启动时选择。`);
       }
 
       if (args.op === "status") {
@@ -137,17 +160,28 @@ export default function (pi: ExtensionAPI) {
         }
 
         state.status = "running"; state.workflow = name; state.runId = runOpts.runId; state.log = []; state.error = undefined;
+        let modelRegistry: AgentModelRegistry | undefined;
+        if (options.getModelSnapshot) {
+          try {
+            seedModelConfigFromParams(workdir, args.params ?? {});
+            const parent = options.getModelSnapshot();
+            modelRegistry = await AgentModelRegistry.create(auditModelSnapshots(parent, readModelConfig(workdir)), { engineDir: ENGINE_DIR, agentKey: "" });
+            activeModels = { workdir, registry: modelRegistry, parent };
+          } catch (error) { state.status = "error"; state.error = String(error); throw error; }
+        }
         const ctx: WorkflowContext = {
           cwd: targetRoot,
           engineDir: ENGINE_DIR,
           workdir,
           params: args.params ?? {},
+          ...(modelRegistry ? { modelRegistry } : {}),
           node: () => { throw new Error("旧接口 node() 已废弃"); },
           report: (msg) => { state.log.push(`[${new Date().toTimeString().slice(0, 8)}] ${msg}`); },
         };
         w.run(ctx, runOpts)
           .then(() => { state.status = "done"; state.log.push("workflow 完成"); })
-          .catch((e) => { state.status = "error"; state.error = String(e); state.log.push("异常：" + String(e).slice(0, 200)); });
+          .catch((e) => { state.status = "error"; state.error = String(e); state.log.push("异常：" + String(e).slice(0, 200)); })
+          .finally(() => { activeModels = undefined; });
         return ok(`workflow ${name} 已${args.op === "resume" ? `从阶段 ${runOpts.from} 续跑` : "启动"}（后台执行）。用 vulnhunter({op:"status"}) 查进度。`);
       }
 
