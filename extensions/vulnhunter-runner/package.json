@@ -7,7 +7,8 @@
     ".": "./src/api.ts",
     "./extension": "./index.ts",
     "./workflow": "./src/runtime.ts",
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./model-provider": "./src/model-provider.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

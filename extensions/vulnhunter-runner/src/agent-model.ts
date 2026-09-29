@@ -1,33 +1,9 @@
-import { InMemoryCredentialStore } from "@earendil-works/pi-ai";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { join } from "node:path";
+import { createModelRuntime, registerModelProvider, type ModelDefinition, type ProviderDefinition } from "./model-provider.ts";
 
-/** Models exposed by a provider in the engine-level, JSON-safe protocol. */
-export interface AgentModelDefinition {
-  id: string;
-  name?: string;
-  api?: string;
-  reasoning?: boolean;
-  input?: Array<"text" | "image">;
-  thinkingLevelMap?: Record<string, string | null>;
-  contextWindow?: number;
-  maxTokens?: number;
-  cost?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number };
-  promptCache?: Record<string, unknown>;
-  samplingParams?: Record<string, unknown>;
-  compat?: Record<string, unknown>;
-}
-
-/** Provider definition accepted by the engine control plane. */
-export interface AgentProviderDefinition {
-  id: string;
-  name?: string;
-  api: string;
-  baseUrl: string;
-  headers?: Record<string, string>;
-  authHeader?: boolean;
-  models: AgentModelDefinition[];
-}
+export type AgentModelDefinition = ModelDefinition;
+export type AgentProviderDefinition = ProviderDefinition;
 
 export interface AgentCredentialDefinition {
   providerId: string;
@@ -82,8 +58,6 @@ export interface ResolvedAgentModel {
   selection: AgentModelSelection;
 }
 
-const ZERO_COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
-
 function cloneSnapshot(snapshot: AgentModelSnapshot): AgentModelSnapshot {
   return JSON.parse(JSON.stringify(snapshot)) as AgentModelSnapshot;
 }
@@ -126,33 +100,6 @@ function assertSnapshotShape(snapshot: AgentModelSnapshot): void {
   }
 }
 
-function toPiProviderDefinition(p: AgentProviderDefinition): Record<string, unknown> {
-  if (!p.id || !p.api || !p.baseUrl || !Array.isArray(p.models) || p.models.length === 0) {
-    throw new Error(`provider ${p.id || "(empty)"} 缺少 api/baseUrl/models`);
-  }
-  return {
-    name: p.name,
-    api: p.api,
-    baseUrl: p.baseUrl,
-    headers: p.headers,
-    authHeader: p.authHeader,
-    models: p.models.map((m) => ({
-      id: m.id,
-      name: m.name ?? m.id,
-      api: m.api,
-      reasoning: m.reasoning ?? false,
-      input: m.input ?? ["text"],
-      thinkingLevelMap: m.thinkingLevelMap,
-      contextWindow: m.contextWindow ?? 128000,
-      maxTokens: m.maxTokens ?? 16384,
-      cost: { ...ZERO_COST, ...(m.cost ?? {}) },
-      promptCache: m.promptCache,
-      samplingParams: m.samplingParams,
-      compat: m.compat,
-    })),
-  };
-}
-
 /** One runtime scope. The object identity is intentionally stable for sessions. */
 export class AgentModelRuntime {
   readonly agentKey: string;
@@ -171,13 +118,9 @@ export class AgentModelRuntime {
 
   static async create(snapshot: AgentModelSnapshot, options: AgentModelRuntimeOptions): Promise<AgentModelRuntime> {
     assertSnapshotShape(snapshot);
-    const credentials = snapshot.source === "inline" ? new InMemoryCredentialStore() : undefined;
-    const runtime = await ModelRuntime.create({
-      ...(snapshot.source === "local"
-        ? { authPath: join(options.engineDir, "auth.json"), modelsPath: join(options.engineDir, "models.json") }
-        : { modelsPath: null, refreshOnCreate: false }),
-      ...(credentials ? { credentials } : {}),
-    });
+    const runtime = snapshot.source === "local"
+      ? await ModelRuntime.create({ authPath: join(options.engineDir, "auth.json"), modelsPath: join(options.engineDir, "models.json") })
+      : await createModelRuntime();
     const slot = new AgentModelRuntime(options.agentKey, runtime, snapshot);
     await slot.install(snapshot);
     return slot;
@@ -253,9 +196,8 @@ export class AgentModelRuntime {
       if (!auth) throw new Error(`provider 未配置凭证：${snapshot.selection.providerId}`);
       return this.runtime;
     }
-    const credentials = new InMemoryCredentialStore();
-    const candidate = await ModelRuntime.create({ modelsPath: null, credentials, refreshOnCreate: false });
-    for (const p of snapshot.providers ?? []) candidate.registerProvider(p.id, toPiProviderDefinition(p) as never);
+    const candidate = await createModelRuntime();
+    for (const p of snapshot.providers ?? []) registerModelProvider(candidate, p);
     for (const c of snapshot.credentials ?? []) {
       if (c.type !== "api_key" || !c.apiKey) throw new Error(`credential ${c.providerId} 无有效 apiKey`);
       await candidate.setRuntimeApiKey(c.providerId, c.apiKey);
@@ -274,7 +216,7 @@ export class AgentModelRuntime {
     for (const providerId of this.runtimeCredentials) await this.runtime.removeRuntimeApiKey(providerId);
     this.runtimeCredentials.clear();
     for (const p of snapshot.providers ?? []) {
-      this.runtime.registerProvider(p.id, toPiProviderDefinition(p) as never);
+      registerModelProvider(this.runtime, p);
       this.registeredProviders.add(p.id);
     }
     for (const c of snapshot.credentials ?? []) {
@@ -323,7 +265,9 @@ export function redactAgentSnapshot(snapshot: AgentModelSnapshot): AgentModelSna
   if (out.credentials) out.credentials = out.credentials.map((c) => ({ ...c, apiKey: "<redacted>" }));
   // Provider headers may contain Authorization/API keys even when credentials
   // are represented separately; never expose them through the status API.
-  if (out.providers) out.providers = out.providers.map((p) => ({ ...p, headers: undefined }));
+  if (out.providers) out.providers = out.providers.map((p) => ({
+    ...p, headers: undefined, models: p.models.map((model) => ({ ...model, headers: undefined })),
+  }));
   return out;
 }
 
