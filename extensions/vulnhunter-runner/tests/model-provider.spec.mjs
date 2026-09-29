@@ -70,3 +70,11 @@ test('model-level header secrets do not leak through engine status snapshots', a
   for (const secret of ['private-header-value', 'private-provider-value', 'private-credential-value']) assert.equal(output.includes(secret), false);
   assert.equal(snapshot.providers[0].models[0].headers['x-secret'], 'private-header-value');
 });
+
+test('a selected provider without credentials fails before a session can select an unrelated model', async () => {
+  const { AgentModelRuntime } = await import('../.dist/src/agent-model.js');
+  await assert.rejects(AgentModelRuntime.create({
+    version: 1, source: 'inline', selection: { providerId: 'missing-key', modelId: 'shared-model', thinking: 'low' },
+    providers: [definition('missing-key')], credentials: [],
+  }, { engineDir: '/unused', agentKey: 'conversation' }), /未配置凭证/);
+});

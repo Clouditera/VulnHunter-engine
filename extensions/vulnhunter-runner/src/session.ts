@@ -14,7 +14,7 @@ export { nodeRoot, loadTaskBook, buildPrompt } from "./session-helpers.ts";
  */
 
 import {
-  createAgentSession, DefaultResourceLoader, SettingsManager, SessionManager,
+  createAgentSession, DefaultResourceLoader, SessionManager,
   type AgentSession, type AgentSessionEvent, type CreateAgentSessionOptions, type ModelRuntime, type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { existsSync, readFileSync } from "node:fs";
@@ -30,6 +30,7 @@ import { makeFindingTool } from "./tools/finding.ts";
 import { monitorState } from "./monitor-state.ts";
 import { parseModelSpec, resolveModel } from "./model-config.ts";
 import type { AgentModelRegistry } from "./agent-model.ts";
+import { sessionSettings } from "./session-settings.ts";
 
 /** 会话上下文（与 WorkflowContext 同形，避免循环依赖） */
 export interface SessionCtx {
@@ -101,7 +102,7 @@ async function createSession(
   const resourceLoader = new DefaultResourceLoader({
     cwd: ctx.cwd,
     agentDir: ctx.engineDir,
-    settingsManager: SettingsManager.create(ctx.cwd, ctx.engineDir),
+    settingsManager: sessionSettings(ctx.cwd, ctx.engineDir),
     appendSystemPrompt: [agentsBase],
     noExtensions: true,
     additionalExtensionPaths: (spec.extensions ?? []).map((n) => join(nodeRoot(ctx.engineDir), "node-ext", n)),

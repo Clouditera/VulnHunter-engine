@@ -34,7 +34,7 @@ export interface AgentModelSnapshot {
 
 export interface AgentModelHost {
   id: string;
-  setResolvedModel(model: unknown, thinking?: string): Promise<void>;
+  setResolvedModel(model: ResolvedAgentModel["model"], thinking?: AgentThinkingLevel): Promise<void>;
 }
 
 export interface AgentModelRuntimeOptions {
@@ -123,6 +123,8 @@ export class AgentModelRuntime {
       : await createModelRuntime();
     const slot = new AgentModelRuntime(options.agentKey, runtime, snapshot);
     await slot.install(snapshot);
+    const { model } = slot.current();
+    if (!(await runtime.getAuth(model))) throw new Error(`provider 未配置凭证：${model.provider}`);
     return slot;
   }
 

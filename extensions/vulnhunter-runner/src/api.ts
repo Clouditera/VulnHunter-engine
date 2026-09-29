@@ -11,3 +11,4 @@ export type { StartRunRequest, RunnerRunView, RunnerRunStatus } from "./control.
 export type { AgentModelSnapshot, AgentModelSelection } from "./agent-model.ts";
 
 export { AgentModelRuntime } from "./agent-model.ts";
+export { sessionSettings } from "./session-settings.ts";
