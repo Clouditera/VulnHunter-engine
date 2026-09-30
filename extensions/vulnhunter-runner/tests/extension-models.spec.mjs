@@ -10,7 +10,7 @@ import { workflows } from '../.dist/src/workflows/registry.js';
 
 const parentSnapshot = () => ({
   version: 7, source: 'inline', selection: { providerId: 'work', modelId: 'shared', thinking: 'low' },
-  providers: ['work', 'personal'].map(id => ({ id, name: id, api: 'openai-completions', baseUrl: 'https://example.invalid/v1',
+  providers: ['work', 'personal'].map(id => ({ id, providerType: "zai", name: id, api: 'openai-completions', baseUrl: 'https://example.invalid/v1',
     models: [{ id: 'shared', reasoning: true, headers: { 'x-literal': '${HOME}' } }] })),
   credentials: ['work', 'personal'].map(providerId => ({ providerId, type: 'api_key', apiKey: `fake-${providerId}-key` })),
 });
@@ -27,6 +27,8 @@ test('child pools capture independent provider/key snapshots, preserving inherit
   for (const pool of ['init', 'hunt', 'verify']) {
     const { runtime, model, selection } = registry.current(pool);
     const auth = await runtime.getAuth(model);
+    assert.equal(model.provider, "zai");
+    assert.notEqual(model.provider, selection.providerId);
     assert.equal(auth.auth.apiKey, `fake-${selection.providerId}-key`);
     assert.equal(auth.auth.headers['x-literal'], '${HOME}');
   }

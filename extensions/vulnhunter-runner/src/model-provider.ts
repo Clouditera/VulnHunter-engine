@@ -33,6 +33,7 @@ export interface ModelDefinition {
 }
 
 export interface ProviderDefinition {
+  /** Native Pi provider identity (e.g. zai); never the platform database record UUID. */
   id: string;
   name?: string;
   api: string;

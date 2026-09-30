@@ -367,7 +367,7 @@ export async function startSession(ctx: SessionCtx, opts: {
       if (thinking) {
         const parsed = parseModelSpec(`${selected.provider}/${selected.id}:${thinking}`);
         sess.setThinkingLevel(parsed.thinking!);
-        assertModelSelection(sess, { providerId: selected.provider, modelId: selected.id, thinking: parsed.thinking });
+        assertModelSelection(sess, { provider: selected.provider, modelId: selected.id, thinking: parsed.thinking });
       }
       const m = model as { provider?: string; id?: string };
       ln({ id, action: "set-model", model: `${m.provider ?? "?"}/${m.id ?? "?"}${thinking ? ":" + thinking : ""}` });

@@ -4,7 +4,11 @@ import { join } from "node:path";
 import { createModelRuntime, registerModelProvider, type ModelDefinition, type ProviderDefinition } from "./model-provider.ts";
 
 export type AgentModelDefinition = ModelDefinition;
-export type AgentProviderDefinition = ProviderDefinition;
+/** Platform record identity is distinct from the native Pi provider ID. */
+export interface AgentProviderDefinition extends Omit<ProviderDefinition, "id"> {
+  id: string;
+  providerType: string;
+}
 
 export interface AgentCredentialDefinition {
   providerId: string;
@@ -34,11 +38,18 @@ export interface AgentModelSnapshot {
   credentials?: AgentCredentialDefinition[];
 }
 
+/** SDK identity only; never compare a platform record UUID to Model.provider. */
+export interface SdkModelSelection {
+  provider: string;
+  modelId: string;
+  thinking?: AgentThinkingLevel;
+}
+
 export function assertModelSelection(
   session: { model?: { provider: string; id: string }; thinkingLevel: string },
-  selection: AgentModelSelection,
+  selection: SdkModelSelection,
 ): void {
-  if (session.model?.provider !== selection.providerId || session.model.id !== selection.modelId
+  if (session.model?.provider !== selection.provider || session.model.id !== selection.modelId
     || (selection.thinking !== undefined && session.thinkingLevel !== selection.thinking)) {
     throw new Error("SDK 未采用所选模型和思考档");
   }
@@ -98,6 +109,7 @@ function assertSnapshotShape(snapshot: AgentModelSnapshot): void {
     for (const p of snapshot.providers) {
       if (!p || typeof p.id !== "string" || !p.id || providerIds.has(p.id)) throw new Error("providers 含空 id 或重复 provider id");
       providerIds.add(p.id);
+      if (typeof p.providerType !== "string" || !p.providerType) throw new Error(`provider ${p.id} 缺少 providerType`);
       if (!Array.isArray(p.models) || p.models.length === 0) throw new Error(`provider ${p.id} 缺少 models`);
       const modelIds = new Set<string>();
       for (const model of p.models) {
@@ -118,13 +130,37 @@ function assertSnapshotShape(snapshot: AgentModelSnapshot): void {
   }
 }
 
+function selectedProvider(snapshot: AgentModelSnapshot): AgentProviderDefinition {
+  const provider = snapshot.providers?.find((entry) => entry.id === snapshot.selection.providerId);
+  if (!provider) throw new Error(`provider 记录不存在：${snapshot.selection.providerId}`);
+  return provider;
+}
+
+function resolveSnapshot(runtime: ModelRuntime, snapshot: AgentModelSnapshot): ResolvedAgentModel {
+  const selection = snapshot.selection;
+  const provider = snapshot.source === "inline" ? selectedProvider(snapshot).providerType : selection.providerId;
+  const model = runtime.getModel(provider, selection.modelId);
+  if (!model) throw new Error(`模型不存在：${selection.providerId}/${selection.modelId}`);
+  validateThinking(model, selection.thinking);
+  return { runtime, model, selection: { ...selection } };
+}
+
+/** Materialize only the selected record. Other same-type records stay in the platform snapshot;
+ * each agent has its own native registry/store, so they never overwrite another agent's key. */
+async function configureInline(runtime: ModelRuntime, snapshot: AgentModelSnapshot): Promise<void> {
+  const { id, providerType, ...definition } = selectedProvider(snapshot);
+  const credential = snapshot.credentials?.find((entry) => entry.providerId === id);
+  if (!credential) throw new Error(`provider 未配置凭证：${id}`);
+  registerModelProvider(runtime, { ...definition, id: providerType });
+  await runtime.setRuntimeApiKey(providerType, credential.apiKey);
+}
+
 /** One runtime scope. The object identity is intentionally stable for sessions. */
 export class AgentModelRuntime {
   readonly agentKey: string;
   readonly runtime: ModelRuntime;
   private snapshotValue: AgentModelSnapshot;
-  private registeredProviders = new Set<string>();
-  private runtimeCredentials = new Set<string>();
+  private inlineProviderId?: string;
   private hosts = new Map<AgentModelHost, true>();
   private updateTail: Promise<unknown> = Promise.resolve();
 
@@ -151,11 +187,7 @@ export class AgentModelRuntime {
   }
 
   current(): ResolvedAgentModel {
-    const selection = this.snapshotValue.selection;
-    const model = this.runtime.getModel(selection.providerId, selection.modelId);
-    if (!model) throw new Error(`模型不存在：${selection.providerId}/${selection.modelId}`);
-    validateThinking(model, selection.thinking);
-    return { runtime: this.runtime, model, selection: { ...selection } };
+    return resolveSnapshot(this.runtime, this.snapshotValue);
   }
 
   register(host: AgentModelHost): () => void {
@@ -185,13 +217,7 @@ export class AgentModelRuntime {
     const oldResolved = this.current();
     try {
       await this.install(snapshot);
-      const model = this.runtime.getModel(snapshot.selection.providerId, snapshot.selection.modelId);
-      if (!model) throw new Error(`模型不存在：${snapshot.selection.providerId}/${snapshot.selection.modelId}`);
-      const resolved: ResolvedAgentModel = {
-        runtime: this.runtime,
-        model,
-        selection: { ...snapshot.selection },
-      };
+      const resolved = resolveSnapshot(this.runtime, snapshot);
       for (const host of this.hosts.keys()) await host.setResolvedModel(resolved.model, resolved.selection.thinking);
       this.snapshotValue = cloneSnapshot(snapshot);
       return resolved;
@@ -210,23 +236,9 @@ export class AgentModelRuntime {
   }
 
   private async buildCandidate(snapshot: AgentModelSnapshot): Promise<ModelRuntime> {
-    if (snapshot.source === "local") {
-      const model = this.runtime.getModel(snapshot.selection.providerId, snapshot.selection.modelId);
-      if (!model) throw new Error(`模型不存在：${snapshot.selection.providerId}/${snapshot.selection.modelId}`);
-      validateThinking(model, snapshot.selection.thinking);
-      const auth = await this.runtime.getAuth(model);
-      if (!auth) throw new Error(`provider 未配置凭证：${snapshot.selection.providerId}`);
-      return this.runtime;
-    }
-    const candidate = await createModelRuntime();
-    for (const p of snapshot.providers ?? []) registerModelProvider(candidate, p);
-    for (const c of snapshot.credentials ?? []) {
-      if (c.type !== "api_key" || !c.apiKey) throw new Error(`credential ${c.providerId} 无有效 apiKey`);
-      await candidate.setRuntimeApiKey(c.providerId, c.apiKey);
-    }
-    const model = candidate.getModel(snapshot.selection.providerId, snapshot.selection.modelId);
-    if (!model) throw new Error(`模型不存在：${snapshot.selection.providerId}/${snapshot.selection.modelId}`);
-    validateThinking(model, snapshot.selection.thinking);
+    const candidate = snapshot.source === "local" ? this.runtime : await createModelRuntime();
+    if (snapshot.source === "inline") await configureInline(candidate, snapshot);
+    const { model } = resolveSnapshot(candidate, snapshot);
     if (!(await candidate.getAuth(model))) throw new Error(`provider 未配置凭证：${snapshot.selection.providerId}`);
     return candidate;
   }
@@ -234,18 +246,12 @@ export class AgentModelRuntime {
   /** Apply snapshot contents to the stable runtime object. */
   private async install(snapshot: AgentModelSnapshot): Promise<void> {
     if (snapshot.source === "local") return;
-    for (const providerId of this.registeredProviders) this.runtime.unregisterProvider(providerId);
-    this.registeredProviders.clear();
-    for (const providerId of this.runtimeCredentials) await this.runtime.removeRuntimeApiKey(providerId);
-    this.runtimeCredentials.clear();
-    for (const p of snapshot.providers ?? []) {
-      registerModelProvider(this.runtime, p);
-      this.registeredProviders.add(p.id);
+    if (this.inlineProviderId) {
+      this.runtime.unregisterProvider(this.inlineProviderId);
+      await this.runtime.removeRuntimeApiKey(this.inlineProviderId);
     }
-    for (const c of snapshot.credentials ?? []) {
-      await this.runtime.setRuntimeApiKey(c.providerId, c.apiKey);
-      this.runtimeCredentials.add(c.providerId);
-    }
+    this.inlineProviderId = selectedProvider(snapshot).providerType;
+    await configureInline(this.runtime, snapshot);
   }
 }
 

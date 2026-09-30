@@ -6,17 +6,17 @@ const definition = (id, models = [{ id: 'shared-model', reasoning: true }]) => (
   id, name: id, api: 'openai-completions', baseUrl: 'https://example.invalid/v1', models,
 });
 
-test('native SDK providers isolate instances and use memory-only credentials', async () => {
-  const runtime = await createModelRuntime();
-  registerModelProvider(runtime, definition('work'));
-  registerModelProvider(runtime, definition('personal'));
-  await runtime.setRuntimeApiKey('work', 'fake-work-key');
-  await runtime.setRuntimeApiKey('personal', 'fake-personal-key');
-  assert.equal((await runtime.getAuth(runtime.getModel('work', 'shared-model'))).auth.apiKey, 'fake-work-key');
-  assert.equal((await runtime.getAuth(runtime.getModel('personal', 'shared-model'))).auth.apiKey, 'fake-personal-key');
-  assert.equal(runtime.getModel('work', 'shared-model').provider, 'work');
-  assert.equal(runtime.getRegisteredProviderConfig('work'), undefined);
-  assert.ok(runtime.getRegisteredNativeProvider('work'));
+test('native SDK scopes isolate keys without changing a canonical provider type', async () => {
+  const work = await createModelRuntime(); const personal = await createModelRuntime();
+  registerModelProvider(work, definition('zai'));
+  registerModelProvider(personal, definition('zai'));
+  await work.setRuntimeApiKey('zai', 'fake-work-key');
+  await personal.setRuntimeApiKey('zai', 'fake-personal-key');
+  assert.equal((await work.getAuth(work.getModel('zai', 'shared-model'))).auth.apiKey, 'fake-work-key');
+  assert.equal((await personal.getAuth(personal.getModel('zai', 'shared-model'))).auth.apiKey, 'fake-personal-key');
+  assert.equal(work.getModel('zai', 'shared-model').provider, 'zai');
+  assert.equal(work.getRegisteredProviderConfig('zai'), undefined);
+  assert.ok(work.getRegisteredNativeProvider('zai'));
 });
 
 test('native SDK key and headers are literal values, without a custom escaping/filtering layer', async () => {
@@ -63,7 +63,7 @@ test('model-level header secrets do not leak through engine status snapshots', a
   const { redactAgentSnapshot } = await import('../.dist/src/agent-model.js');
   const snapshot = {
     version: 1, source: 'inline', selection: { providerId: 'private', modelId: 'model' },
-    providers: [{ ...definition('private', [{ id: 'model', headers: { 'x-secret': 'private-header-value' } }]), headers: { Authorization: 'private-provider-value' } }],
+    providers: [{ providerType: 'custom', ...definition('private', [{ id: 'model', headers: { 'x-secret': 'private-header-value' } }]), headers: { Authorization: 'private-provider-value' } }],
     credentials: [{ providerId: 'private', type: 'api_key', apiKey: 'private-credential-value' }],
   };
   const output = JSON.stringify(redactAgentSnapshot(snapshot));
@@ -75,6 +75,6 @@ test('a selected provider without credentials fails before a session can select 
   const { AgentModelRuntime } = await import('../.dist/src/agent-model.js');
   await assert.rejects(AgentModelRuntime.create({
     version: 1, source: 'inline', selection: { providerId: 'missing-key', modelId: 'shared-model', thinking: 'low' },
-    providers: [definition('missing-key')], credentials: [],
+    providers: [{ ...definition('missing-key'), providerType: 'custom' }], credentials: [],
   }, { engineDir: '/unused', agentKey: 'conversation' }), /未配置凭证/);
 });

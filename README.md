@@ -53,7 +53,7 @@ const result = await runner.wait(run.runId);
 
 ## 平台模型配置
 
-平台使用 `AgentModelRuntime` 的 `inline` 快照：provider 实例 ID、多个模型定义、内存凭证及精确选择。原生 Pi provider 直接消费 key/headers 字符串，不经过 `models.json` 的表达式解释器。
+平台使用 `AgentModelRuntime` 的 `inline` 快照：provider 实例 ID、providerType、多个模型定义、内存凭证及精确选择。记录 ID 只在平台选择/授权中使用；Pi 的 Provider.id、Model.provider 和认证索引使用 providerType（如 zai）。每个 agent 的独立内存 runtime 只注册它所选记录，同类型多账号不在同一 Pi registry 中混放。原生 Pi provider 直接消费 key/headers 字符串，不经过 `models.json` 的表达式解释器。
 
 装配 `/extension` 时显式提供 `getModelSnapshot`，使 init/hunt/verify 从同一个已提交父快照建立独立 SDK runtime。后续主对话配置不会无意改动已开始任务；任务模型变更走自己的 registry。`.vulnforge/system/model.json` 只记录任务的模型选择引用，绝不是 provider/凭证来源。独立 CLI 的本地配置入口仍与平台隔离。
 
