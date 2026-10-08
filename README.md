@@ -2,6 +2,29 @@
 
 审计 workflow 的独立执行内核，同时提供 pi 扩展入口与平台编程入口。平台身份、授权、Task 产品数据与部署不在此仓。
 
+## 开发说明（必读）
+
+动手写代码或评审之前，阅读并**遵循**以下文档；与之冲突的实现不予合并。注意 `extensions/vulnhunter-runner/AGENTS.md` 是审计节点的基底提示词，不是开发说明。
+
+文档：
+
+- [docs/engine-design.md](docs/engine-design.md)：现行引擎设计（结构、阶段、会话、执行器、产物）。
+- [docs/workflow-authoring.md](docs/workflow-authoring.md)：编写新 workflow。
+- [docs/model-control.md](docs/model-control.md)：模型控制面。
+- [docs/archive/](docs/archive/)：历史设计，只读，不能作为实现依据。
+- 平台整体架构原则：Community 仓 `docs/architecture.md` 与其 README 的开发说明。
+
+规则：
+
+1. **引擎独立于平台**：不引用平台代码、不访问平台数据库、不处理平台身份与授权；平台需要的能力通过编程入口和机器可读声明提供。
+2. **workflow 显式登记**在 `src/workflows/registry.ts`；workflow 只编排，不实现机制（见 workflow-authoring.md）。
+3. **结构化产物只经对象工具落盘**；产物只增不删。
+4. **模型消费一律经执行器容量门**，许可在成功、失败、中止时都释放。
+5. **Pi SDK 是唯一 agent 框架**，不做 adapter。
+6. 单个源码文件不超过 500 行；不留没有上下文的 `TODO`；密钥不进代码和日志。
+7. 改动后在仓根跑 `pnpm typecheck`，runner 测试在 `extensions/vulnhunter-runner` 下跑 `pnpm test`。
+8. 平台以 submodule 固定本仓版本，升级顺序 Engine → Community → Enterprise。
+
 ## 安装
 
 Node 22.22+，pnpm 11.18.0。递归初始化子模块后，在仓根执行：
@@ -58,26 +81,3 @@ const result = await runner.wait(run.runId);
 装配 `/extension` 时显式提供 `getModelSnapshot`，使 init/hunt/verify 从同一个已提交父快照建立独立 SDK runtime。后续主对话配置不会无意改动已开始任务；任务模型变更走自己的 registry。`.vulnforge/system/model.json` 只记录任务的模型选择引用，绝不是 provider/凭证来源。独立 CLI 的本地配置入口仍与平台隔离。
 
 子会话的设置保留 Pi 的 global/project 合并规则，但 SDK 更新默认选择时只写内存。分支摘要使用所属会话的 SDK runtime、模型和思考档，保留原来的闭区间、挂载位置、摘要结构和 32768 输出预算，不再读 key 文件或强制开启思考。所有明确的模型/思考选择均检查 SDK 实际值，不允许静默代选或降档。
-
-## 开发说明
-
-给开发者和 AI 编码助手。本仓不在根目录放 `AGENTS.md`：Pi 会把工作目录及上级目录中的 `AGENTS.md` 当作上下文注入会话，放在仓根可能混进审计 agent 的提示词；`extensions/vulnhunter-runner/AGENTS.md` 是审计节点的基底提示词，不是开发说明。开发规则写在这里。
-
-文档：
-
-- [docs/engine-design.md](docs/engine-design.md)：现行引擎设计（结构、阶段、会话、执行器、产物）。
-- [docs/workflow-authoring.md](docs/workflow-authoring.md)：编写新 workflow。
-- [docs/model-control.md](docs/model-control.md)：模型控制面。
-- [docs/archive/](docs/archive/)：历史设计，只读，不能作为实现依据。
-- 平台整体架构：Community 仓 `docs/architecture.md`、`AGENTS.md`。
-
-规则：
-
-1. **引擎独立于平台**：不引用平台代码、不访问平台数据库、不处理平台身份与授权；平台需要的能力通过编程入口和机器可读声明提供。
-2. **workflow 显式登记**在 `src/workflows/registry.ts`；workflow 只编排，不实现机制（见 workflow-authoring.md）。
-3. **结构化产物只经对象工具落盘**；产物只增不删。
-4. **模型消费一律经执行器容量门**，许可在成功、失败、中止时都释放。
-5. **Pi SDK 是唯一 agent 框架**，不做 adapter。
-6. 单个源码文件不超过 500 行；不留没有上下文的 `TODO`；密钥不进代码和日志。
-7. 改动后在仓根跑 `pnpm typecheck`，runner 测试在 `extensions/vulnhunter-runner` 下跑 `pnpm test`。
-8. 平台以 submodule 固定本仓版本，升级顺序 Engine → Community → Enterprise。
