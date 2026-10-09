@@ -19,8 +19,8 @@
     "yaml": "^2.9.0"
   },
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": "0.87.x",
-    "@earendil-works/pi-ai": "0.87.x",
-    "@earendil-works/pi-tui": "0.87.x"
+    "@earendil-works/pi-coding-agent": "1.1.x",
+    "@earendil-works/pi-ai": "1.1.x",
+    "@earendil-works/pi-tui": "1.1.x"
   }
 }

@@ -1,9 +1,20 @@
 #!/usr/bin/env bash
 # VulnHunter-engine 启动器——启动位置不限：可在目标项目目录，也可在任何目录启动后用路径指定目标（target）。
-# 本体 = 裸 pi：SYSTEM.md（主会话身份）、扩展（vulnhunter-runner）与技能（skills/）
-# 经 PI_CODING_AGENT_DIR 自动发现；vulnhunter skill 承载使用指南。
+# 本体 = 裸 pi：SYSTEM.md（主会话身份）与技能（skills/）经 PI_CODING_AGENT_DIR 自动发现；
+# vulnhunter skill 承载使用指南。
+#
+# 扩展装配固定，不受本地 settings.json 影响（docs/engine-design.md §9 / Community architecture.md §3.6）：
+# - -ne 关掉自动发现与 Pi 内置扩展，再显式装入 vulnhunter-runner 与保留的内置扩展
+#   （MCP、codemode、工具搜索）；llama.cpp 不装。
+#   注意 -e 必须指向 index.ts：vulnhunter-runner 的 package.json 没有 pi 清单，指向目录会静默不加载。
+# - --no-approve：被审计项目是不可信输入，不加载其 .pi/ 下的设置、MCP、扩展。
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [[ -f "$DIR/.env" ]]; then set -a; source "$DIR/.env"; set +a; fi
 export PI_CODING_AGENT_DIR="$DIR"
-exec "$DIR/node_modules/.bin/pi" "$@"   # SYSTEM.md 由 pi 按约定自动加载，无需 --append-system-prompt
+exec "$DIR/node_modules/.bin/pi" \
+  --no-extensions \
+  -e "$DIR/extensions/vulnhunter-runner/index.ts" \
+  -e builtin:mcp -e builtin:codemode -e builtin:tool-search \
+  --no-approve \
+  "$@"
