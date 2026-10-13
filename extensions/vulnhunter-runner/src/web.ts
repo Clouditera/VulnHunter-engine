@@ -210,7 +210,8 @@ function buildStageDetail(workdir: string, runId: string, stage: string) {
     metrics.roundHyps = Object.fromEntries(Object.entries(data.roundHyps ?? {}).map(([k, v]) => [k, Array.isArray(v) ? v.length : 0]));
     metrics.producedHyp = Object.values(data.roundHyps ?? {}).reduce((n: number, v) => n + (Array.isArray(v) ? v.length : 0), 0); // 阶段真实产量（run-state 记录，非盘面推）
     metrics.roundSigma = data.roundSigma ?? {};
-    metrics.zeroStreak = data.huntZeroStreak ?? null;
+    metrics.zeroStreak = data.huntZeroStreak ?? null;   // 旧字段（HALL-64 后不再写入；新判定见 roundStats）
+    metrics.roundStats = data.roundStats ?? [];
   }
   if (stage === "chains") {
     const marks = lineage.filter((e) => e.action === "mark").map((e) => String(e.label ?? ""));
@@ -798,7 +799,7 @@ document.addEventListener("click", async (e) => {
     e.preventDefault();
     const d = S.lastGood?.detail?.state?.data?.roundHyps ?? {};
     const keys = Object.keys(d).sort((a, b) => Number(a.replace(/\\D+/g, "")) - Number(b.replace(/\\D+/g, "")));
-    modal("逐轮 HYP 产出", \`<pre>\${keys.map((k) => \`\${k}  +\${arrLen(d[k])} HYP\`).join("\\n") || "（无）"}</pre><p>停轮：覆盖达到阈值 且 连续 x 轮 0 HYP（hunt_zero_rounds，默认 3）。轮次不默认封顶（除非显式给了 rounds）。</p>\`);
+    modal("逐轮 HYP 产出", \`<pre>\${keys.map((k) => \`\${k}  +\${arrLen(d[k])} HYP\`).join("\\n") || "（无）"}</pre><p>停轮（有效产出判定）：覆盖达阈值 且（有效新增<3 / 近2轮转化率=0 / 边际减半）→ 确认轮零新增即停；硬上限=min(rounds, clamp(5·log10(loc),2,15))。</p>\`);
   }
   else if (action === "events") {
     e.preventDefault();

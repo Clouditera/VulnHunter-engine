@@ -6,13 +6,16 @@
  * 池（fish 09-21 三池定稿）：init（onboard/build/research/compress，锁1）/ hunt（锁1）/ verify（sv|dv）；沙箱=资源容量非池。
  *
  * hunt（fish 09-11 定稿）：并发锁 1 单会话逐轮；每轮选一个千行级小功能点精读；
- * 无轮次上限（rounds 仅作显式封顶）；停轮=覆盖≥阈值 且 连续 x 轮零新增（hunt_zero_rounds，默认 3，fish 09-21 校准）；
+ * 停轮（HALL-64 有效产出判定器，src/stop-decider.ts）：覆盖≥阈值 且（有效新增<3 / 近2轮转化率=0 / 有效新增边际减半）
+ * → 确认轮 → 确认轮零有效新增即停；硬上限=min(rounds 显式封顶, clamp(5*log10(loc),2,15))（hunt_max_rounds 可调 k）；
+ * hunt_zero_rounds 已 deprecated：保留读取不参与判定，显式传入打 warning。
  * 摘要两档：每轮结束小摘要（ΣhuntN），上下文占用>60% 时对历史全 hunt 大轮摘要（Σhunt1-N）。
  *
  * 断点/单步：runtime.runStages 驱动，--from <阶段> 续跑、--only <阶段> 单步重试。
  * 标记语法：docs/session-marks.md（<任务>-start[成分] / <任务>-done[成分][+产出]，Σ=已摘要）。
  *
- * 参数（ctx.params）：rounds / chain_filter / chain_concurrency / hunt_coverage_threshold / hunt_zero_rounds /
+ * 参数（ctx.params）：rounds / chain_filter / chain_concurrency / hunt_coverage_threshold / hunt_max_rounds /
+ * hunt_zero_rounds（deprecated，仅读取告警，不参与判定）/
  * hunt_mode（fresh=每轮从 init 重开）/ coverage_include / coverage_exclude / sandbox_cfg / skip_ev / model_concurrency /
  * 模型：model（全局）/ model_init / model_hunt / model_verify（按池），语法 provider/model[:thinking]（见 model-config.ts）。
  */
@@ -25,6 +28,7 @@ import { monitorState } from "../monitor-state.ts";
 import { hypIds, updateHyp } from "../tools/hyp.ts";
 import { readSandboxState } from "../tools/sandbox.ts";
 import { createLiveModelSwitch, createModelFileWatch, effectiveModelSpec, readModelConfig, seedModelConfigFromParams } from "../model-config.ts";
+import { hardCap, shouldStop, type RoundStat } from "../stop-decider.ts";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -52,10 +56,11 @@ const liteWorkflow = defineStagedWorkflow({
       model_hunt: modelOf("hunt"),
       model_verify: modelOf("verify"),
       vuln_focus: ctx.params.vuln_focus ?? "（全方向）",
-      rounds: ctx.params.rounds ?? "（无上限）",
+      rounds: ctx.params.rounds ?? "（自动硬上限 clamp(5·log10(loc),2,15)）",
       hunt_mode: ctx.params.hunt_mode ?? "积累制",
       hunt_coverage_threshold: `${ctx.params.hunt_coverage_threshold ?? "90"}%`,
-      hunt_zero_rounds: ctx.params.hunt_zero_rounds ?? "3",
+      hunt_max_rounds: ctx.params.hunt_max_rounds ?? "5（k 系数）",
+      hunt_zero_rounds: ctx.params.hunt_zero_rounds !== undefined ? `${ctx.params.hunt_zero_rounds}（已废弃，不参与判定）` : "（已废弃）",
       chain_filter: ctx.params.chain_filter ?? "全部",
       chain_concurrency: ctx.params.chain_concurrency ?? "3",
       model_concurrency: ctx.params.model_concurrency ?? "3（模型容量许可）",
@@ -155,8 +160,12 @@ const liteWorkflow = defineStagedWorkflow({
         await huntPool.submit(async () => {
         const fresh = ctx.params.hunt_mode === "fresh";
         const threshold = Number(ctx.params.hunt_coverage_threshold || "90");
-        const zeroRounds = Number(ctx.params.hunt_zero_rounds || "3");   // 停轮连零轮数 x（fish 09-21 校准）
-        const maxRounds = ctx.params.rounds ? Number(ctx.params.rounds) : Infinity;
+        // HALL-64：hunt_zero_rounds 已废弃——由有效产出判定取代；保留读取，显式传入仅打 warning
+        if (ctx.params.hunt_zero_rounds !== undefined) {
+          ctx.report(`⚠ 参数 hunt_zero_rounds 已废弃（deprecated）：不再参与停轮判定，由有效产出判定器取代（收到值 ${ctx.params.hunt_zero_rounds}，已忽略）`);
+        }
+        const maxRoundsK = ctx.params.hunt_max_rounds ? Number(ctx.params.hunt_max_rounds) : 5;
+        const explicitRounds = ctx.params.rounds ? Number(ctx.params.rounds) : undefined;
         const d = s.state.data;
         // 覆盖数据一律读 coverage 扩展的产物（快照 JSON）——09-20 解耦，runner 不再直接聚合事件
         const covSnapPath = join(ctx.workdir, "system", "coverage", "code-reading-coverage.json");
@@ -175,10 +184,23 @@ const liteWorkflow = defineStagedWorkflow({
           if ((snap0.summary?.total_lines ?? null) === 0)
             ctx.report("⚠ 覆盖率统计目标为空（coverage_include 被 coverage_exclude 吞掉？），coverage 将全程为零");
         } catch { /* 快照未生成：会话启动后由扩展落盘，此处跳过 */ }
-        let zeroStreak = (d.huntZeroStreak as number | undefined) ?? 0;
+        // HALL-64：loc 取覆盖率统计口径总行数（与 small-audit 分流同一口径）
+        const locOf = (): number | undefined => {
+          try {
+            const snap = JSON.parse(readFileSync(covSnapPath, "utf-8")) as { summary?: { total_lines?: number } };
+            const tl = snap.summary?.total_lines;
+            return tl && tl > 0 ? tl : undefined;
+          } catch { return undefined; }
+        };
+        const cap = hardCap({ loc: locOf(), k: maxRoundsK, explicitMaxRounds: explicitRounds });
+        ctx.report(`hunt 轮数硬上限：${cap === Infinity ? "无（未取到 loc）" : cap}${explicitRounds !== undefined ? `（显式 rounds=${explicitRounds}）` : ""}`);
+        let roundStats: RoundStat[] = (d.roundStats as RoundStat[] | undefined) ?? [];   // 断点续跑：复用历史轮统计
+        let pendingConfirm = false;   // 上一轮判定 CONFIRM → 本轮为确认轮（最多 1 次）
         let lastBig = (d.huntLastBig as number | undefined) ?? 0;   // 大轮摘要已覆盖到第几轮
-        for (let r0 = ((d.huntRound as number | undefined) ?? 0) + 1; r0 <= maxRounds; r0++) {
+        for (let r0 = ((d.huntRound as number | undefined) ?? 0) + 1; r0 <= cap; r0++) {
           const rn = `hunt${r0}`, mine = `h${r0}`;
+          const isConfirmRound = pendingConfirm;
+          pendingConfirm = false;
           // 成分表：大轮检查点（若有）+ 其后各轮小摘要；fresh 模式没有轮间摘要
           const sigmaPrev = fresh ? [] : [...(lastBig ? [`Σhunt1-${lastBig}`] : []),
             ...Array.from({ length: r0 - 1 - lastBig }, (_, i) => `Σhunt${lastBig + i + 1}`)];
@@ -211,15 +233,30 @@ const liteWorkflow = defineStagedWorkflow({
               lastBig = r0;
             }
           }
-          // 停轮判定（fish 09-21 校准）：覆盖率达阈值 且 连续 x 轮零新增
+          // 停轮判定（HALL-64 有效产出判定器）：有效新增 = 该轮 ADMIT 的 HYP 数；
+          // 准入闸（§2.2）落地前，news 全部视为 ADMIT（gate 落地后此处置换为 gate 计数）
           const covPct = targetCov();
-          zeroStreak = news.length === 0 ? zeroStreak + 1 : 0;
-          if (covPct !== null && covPct * 100 >= threshold && zeroStreak >= zeroRounds) {
-            ctx.report(`覆盖达标（${(covPct * 100).toFixed(1)}% ≥ ${threshold}%）且连续 ${zeroRounds} 轮零新增，hunt 停轮`);
-            d.huntRound = r0; d.huntZeroStreak = zeroStreak; d.huntLastBig = lastBig; s.save();
+          const stat: RoundStat = { effectiveNew: news.length, hypCount: news.length, isConfirmationRound: isConfirmRound || undefined };
+          roundStats = [...roundStats.filter((x, i) => i < r0 - 1), stat];   // 续跑/重跑按轮位覆盖
+          const decision = shouldStop({
+            rounds: roundStats,
+            coverage: covPct !== null ? covPct * 100 : 0,
+            coverageThreshold: threshold,
+            loc: locOf(),
+            maxRoundsK,
+            ...(explicitRounds !== undefined ? { explicitMaxRounds: explicitRounds } : {}),
+            currentRound: r0,
+          });
+          if (decision.action === "stop") {
+            ctx.report(`hunt 停轮：${decision.reason}（覆盖 ${covPct !== null ? (covPct * 100).toFixed(1) + "%" : "未知"}，阈值 ${threshold}%）`);
+            d.huntRound = r0; d.huntLastBig = lastBig; d.roundStats = roundStats; s.save();
             break;
           }
-          d.huntRound = r0; d.huntZeroStreak = zeroStreak; d.huntLastBig = lastBig; s.save();
+          if (decision.action === "confirm") {
+            ctx.report(`hunt 触发停轮条件（${decision.reason}），下一轮为确认轮`);
+            pendingConfirm = true;
+          }
+          d.huntRound = r0; d.huntLastBig = lastBig; d.roundStats = roundStats; s.save();
           wakeups.push();   // 轮末唤醒：新 HYP 已落盘，消费侧立即开工
         }
         const sigmaEnd = fresh ? [] : [...(lastBig ? [`Σhunt1-${lastBig}`] : []),
