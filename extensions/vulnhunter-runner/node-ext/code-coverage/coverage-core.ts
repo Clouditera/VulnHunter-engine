@@ -40,6 +40,18 @@ export function countCoverageTargetFiles(targetRoot: string, outputDir: string):
   return walkFiles(targetRoot, loadCoverageConfig(outputDir)).length;
 }
 
+export interface CoverageTargetFile { rel: string; full: string; lines: number }
+
+/** 枚举统计目标内全部文本文件及行数（LOC 分流/全文装配用；口径 = 覆盖率分母，09-20 解耦后唯一事实源） */
+export function listCoverageTargetFiles(targetRoot: string, outputDir: string): CoverageTargetFile[] {
+  const cfg = loadCoverageConfig(outputDir);
+  return walkFiles(targetRoot, cfg).map((full) => ({
+    full,
+    rel: path.relative(targetRoot, full).replaceAll(path.sep, "/"),
+    lines: countLines(full),
+  }));
+}
+
 /** 单条目匹配：无 "*"=路径前缀（"."=全项目）；含 "*"=文件级通配（`*.json`、`src/*.c`；* 可跨 /） */
 function entryMatches(rel: string, entry: string): boolean {
   if (entry === ".") return true;

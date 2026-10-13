@@ -16,8 +16,12 @@
  *
  * 参数（ctx.params）：rounds / chain_filter / chain_concurrency / hunt_coverage_threshold / hunt_max_rounds /
  * hunt_zero_rounds（deprecated，仅读取告警，不参与判定）/
- * hunt_mode（fresh=每轮从 init 重开）/ coverage_include / coverage_exclude / sandbox_cfg / skip_ev / model_concurrency /
+ * hunt_mode（fresh=每轮从 init 重开）/ audit_small_max_loc（小模式 LOC 阈值，默认 5000；HALL-64 §1）/
+ * coverage_include / coverage_exclude / sandbox_cfg / skip_ev / model_concurrency /
  * 模型：model（全局）/ model_init / model_hunt / model_verify（按池），语法 provider/model[:thinking]（见 model-config.ts）。
+ *
+ * 小模式分流（HALL-64 §1）：LOC < audit_small_max_loc → SMALL 全量直审（全文装配单会话 + 1 轮 HYP，无逐轮精读会话与 Σhunt 链）；
+ * 装配预算 = 上下文窗口×60%，超预算降级回 HUNT 并记日志；运行元数据落盘 mode: small|hunt。
  */
 
 import { defineStagedWorkflow, runStages, type StageCtx, type StageDef, type WorkflowContext } from "../runtime.ts";
@@ -31,6 +35,23 @@ import { createLiveModelSwitch, createModelFileWatch, effectiveModelSpec, readMo
 import { hardCap, shouldStop, type RoundStat } from "../stop-decider.ts";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { listCoverageTargetFiles } from "../../node-ext/code-coverage/coverage-core.ts";
+
+/** 装配预算占比：模型上下文窗口 × 60%（与摘要触发线一致，设计规格 §1） */
+const ASSEMBLE_BUDGET_RATIO = 0.6;
+/** 行文本 → token 的保守估算（代码约 3.5 字符/token，取 3 上浮保险） */
+const CHARS_PER_TOKEN = 3;
+
+/** SMALL 模式全文装配预算检查：靶内全文本一次进单会话，估算 tokens ≤ 窗口×60%（HALL-64 §1） */
+function fitsAssembleBudget(files: Array<{ rel: string; full: string; lines: number }>, window: number): { ok: boolean; estTokens: number; budget: number } {
+  const budget = Math.floor(window * ASSEMBLE_BUDGET_RATIO);
+  let chars = 0;
+  for (const f of files) {
+    try { chars += readFileSync(f.full, "utf-8").length + f.rel.length + 8; } catch { /* 读不了的文件按行数估算 */ chars += f.lines * 40; }
+  }
+  const estTokens = Math.ceil(chars / CHARS_PER_TOKEN);
+  return { ok: estTokens <= budget, estTokens, budget };
+}
 
 const COMPACT_INIT = "保留：项目画像与威胁模型要点、构建部署要点、关键代码区域与行号、漏洞认可口径、检索到的情报结论。丢弃：过程性输出与重复细节。摘要正文控制在 4000 字以内。";
 const COMPACT_ROUND = "只保留本轮新提出的 HYP 标题+一句话主张+关键锚点行号，以及读过的代码区域清单；丢弃推演过程。控制在 2000 字内。";
@@ -61,6 +82,7 @@ const liteWorkflow = defineStagedWorkflow({
       hunt_coverage_threshold: `${ctx.params.hunt_coverage_threshold ?? "90"}%`,
       hunt_max_rounds: ctx.params.hunt_max_rounds ?? "5（k 系数）",
       hunt_zero_rounds: ctx.params.hunt_zero_rounds !== undefined ? `${ctx.params.hunt_zero_rounds}（已废弃，不参与判定）` : "（已废弃）",
+      audit_small_max_loc: ctx.params.audit_small_max_loc ?? "5000",
       chain_filter: ctx.params.chain_filter ?? "全部",
       chain_concurrency: ctx.params.chain_concurrency ?? "3",
       model_concurrency: ctx.params.model_concurrency ?? "3（模型容量许可）",
@@ -117,6 +139,15 @@ const liteWorkflow = defineStagedWorkflow({
     };
     monitorState.attachExecutor(exec);   // 观察台/监控台数据源 = executor.stats()
 
+    // ---- 小模式分流（HALL-64 §1）：onboard 后按 LOC 判定；loc < audit_small_max_loc（默认 5000）走 SMALL，
+    //  全文一次装配进单会话跑 1 轮 HYP 生成；装配超预算（窗口×60%）降级回 HUNT 并记日志。----
+    // 分流判定放在 stages() 构建期（onboard 执行前）：口径同源 = 覆盖率分母枚举，与 onboard 产物无关。
+    const smallMaxLoc = Math.max(1, Number(ctx.params.audit_small_max_loc || "5000"));
+    const smallFiles = listCoverageTargetFiles(ctx.cwd, ctx.workdir);
+    const loc = smallFiles.reduce((n, f) => n + f.lines, 0);
+    const isSmall = loc < smallMaxLoc;
+    ctx.report(`审计模式分流：LOC=${loc}（阈值 ${smallMaxLoc}）→ ${isSmall ? "SMALL（全量直审）" : "HUNT（多轮精读）"}`);
+
     // ---- init 三段 ----
     out.push({ name: "onboard", run: async (s) => {
       const { h: s0, done: stageDone } = await pooledOpen(s, "init", "init", { fresh: true });
@@ -150,14 +181,115 @@ const liteWorkflow = defineStagedWorkflow({
       } finally { s0.close(); stageDone(); }
     } });
 
+    // ---- SMALL 模式（HALL-64 §1）：全文装配 → 单轮 HYP 生成；不建逐轮精读会话、无 Σhunt 摘要链。
+    //  装配预算 = 模型上下文窗口 × 60%，超预算（或窗口未知）降级回 HUNT 并记日志。----
+    if (isSmall) out.push({ name: "hunt", parallelGroup: "audit-loop", run: async (s) => {
+      (s.state.data as Record<string, unknown>).huntSettled = false;
+      s.save();
+      const { h: s0, done: stageDone } = await pooledOpen(s, "hunt", "hunt");
+      const d = s.state.data;
+      d.mode = "small";   // 运行元数据落盘（复盘统计用）；降级时改写为 hunt
+      d.loc = loc;
+      s.save();
+      try {
+        await huntPool.submit(async () => {
+          const win = s0.contextWindow();
+          const fit = win !== null ? fitsAssembleBudget(smallFiles, win) : null;
+          if (fit !== null && fit.ok) {
+            // 全文一次装配：靶内全部文本按路径清单进单会话，模型用 read 一次性通读（不再逐轮精读）
+            const fileList = smallFiles.map((f) => `- ${f.rel}（${f.lines} 行）`).join("\n");
+            // 覆盖数据读 coverage 扩展快照（与 HUNT 同一数据源；停轮判定的 coverage 输入）
+            const covSnapPath = join(ctx.workdir, "system", "coverage", "code-reading-coverage.json");
+            const covPct = (): number => {
+              try {
+                const snap = JSON.parse(readFileSync(covSnapPath, "utf-8")) as { summary?: { total_lines?: number; coverage?: number } };
+                const sm = snap.summary ?? {};
+                return (sm.total_lines ?? 0) > 0 ? (sm.coverage ?? 0) * 100 : 0;
+              } catch { return 0; }
+            };
+            await s0.execCommand("/coverage-record on");
+            const threshold = Number(ctx.params.hunt_coverage_threshold || "90");
+            const roundStats: RoundStat[] = [];
+            // SMALL 最多 2 轮（设计 §1：1 轮 HYP 生成 → 有效产出判定 → 可选第 2 轮）
+            for (let r0 = 1; r0 <= 2; r0++) {
+              const rn = `hunt${r0}`;
+              const before = new Set(hypIds(ctx.workdir));
+              const r = await s0.prompt(buildPrompt(ctx, "hunt",
+                `hunt 任务（SMALL 全量直审，第 ${r0} 轮）。本项目规模小（${loc} 行），不做逐轮精读——靶内全部 ${smallFiles.length} 个文本文件用 read 一次性通读，沿真实数据流系统性挖掘风险假设（HYP），每条落到具体 file:line；与已有 HYP 重复不提。${r0 > 1 ? "这是补漏轮：重点排查第 1 轮未覆盖的链路、入口与边界条件。" : ""}\n\n靶内文件清单：\n${fileList}`),
+                { start: `${rn}-start[init]`, label: rn });
+              if (r.aborted) throw new Error("API 不可用");
+              const news = hypIds(ctx.workdir).filter((id) => !before.has(id));
+              ((d.roundHyps ??= {}) as Record<string, string[]>)[rn] = news;
+              ((d.roundSigma ??= {}) as Record<string, string[]>)[rn] = [];
+              s0.mark(`${rn}-done[init,h${r0}][+${news.length}HYP]`);   // 标签沿用 huntN 体系：chains 电选/fork 点依赖它
+              roundStats.push({ effectiveNew: news.length, hypCount: news.length });
+              d.huntRound = r0;
+              d.roundStats = roundStats;
+              s.save();
+              ctx.report(`SMALL 第 ${r0} 轮产出 ${news.length} 条 HYP${r0 === 1 ? `（估算装配 ${fit.estTokens}/${fit.budget} tokens）` : ""}`);
+              wakeups.push();   // 轮末唤醒：新 HYP 已落盘，消费侧立即开工
+              if (r0 >= 2) break;
+              // 第 2 轮是否必要（设计 §1/§3）：有效产出判定器触发即不跑第 2 轮，直接进 chains
+              const decision = shouldStop({
+                rounds: roundStats,
+                coverage: covPct(),
+                coverageThreshold: threshold,
+                loc,
+                currentRound: r0,
+              });
+              if (decision.action !== "continue") {
+                ctx.report(`SMALL 停轮判定：${decision.action === "stop" ? decision.reason : `触发（${decision.reason}）`}——不跑第 2 轮，直接进 chains`);
+                break;
+              }
+              ctx.report("SMALL 停轮判定：未触发，跑第 2 轮补漏");
+            }
+            await s0.execCommand("/coverage-record off");
+            s0.mark(`hunt-end[init][+${hypIds(ctx.workdir).length}HYP]`);
+            return;
+          }
+          const reason = win === null
+            ? "模型上下文窗口未知，无法核算装配预算"
+            : `全文装配估算 ${fit!.estTokens} tokens 超预算 ${fit!.budget}（窗口 ${win}×60%）`;
+          ctx.report(`SMALL 装配超预算，降级回 HUNT 模式：${reason}`);
+          d.mode = "hunt";
+          d.degradeReason = reason;
+          s.save();
+          await runHuntRounds(s, s0);
+        }, { tag: "hunt" });
+      } finally {
+        s0.close();
+        stageDone();
+        (s.state.data as Record<string, unknown>).huntSettled = true;
+        s.save();
+        wakeups.push();
+      }
+    } });
+
     // ---- hunt（单阶段多轮；fish 09-11 定稿见文件头注释；与 verify 消费并行，fish 09-21）----
-    out.push({ name: "hunt", parallelGroup: "audit-loop", run: async (s) => {
+    else out.push({ name: "hunt", parallelGroup: "audit-loop", run: async (s) => {
       (s.state.data as Record<string, unknown>).huntSettled = false;   // run 级标志：重跑 hunt 时清掉上次遗留（否则并行 chains 会立刻误判收尾）
       s.save();
       const { h: s0, done: stageDone } = await pooledOpen(s, "hunt", "hunt");
       try {
         // 整个多轮 hunt = hunt 池的一个长任务（锁 1，全程持 1 份模型许可）
         await huntPool.submit(async () => {
+        const d = s.state.data;
+        d.mode = "hunt";   // 运行元数据落盘（与 SMALL 分支对齐）
+        d.loc = loc;
+        s.save();
+        await runHuntRounds(s, s0);
+        }, { tag: "hunt" });
+      } finally {
+        s0.close();
+        stageDone();
+        (s.state.data as Record<string, unknown>).huntSettled = true;   // 上游落定（含失败路径）：消费侧收干后退出
+        s.save();
+        wakeups.push();
+      }
+    } });
+
+    /** 现有 HUNT 多轮流程原样抽出（行为不变；SMALL 降级回落也走这里） */
+    const runHuntRounds = async (s: import("../runtime.ts").StageCtx, s0: SessionHandle): Promise<void> => {
         const fresh = ctx.params.hunt_mode === "fresh";
         const threshold = Number(ctx.params.hunt_coverage_threshold || "90");
         // HALL-64：hunt_zero_rounds 已废弃——由有效产出判定取代；保留读取，显式传入仅打 warning
@@ -263,15 +395,7 @@ const liteWorkflow = defineStagedWorkflow({
           ...Array.from({ length: ((d.huntRound as number | undefined) ?? 0) - lastBig }, (_, i) => `Σhunt${lastBig + i + 1}`)];
         s0.mark(`hunt-end[init${sigmaEnd.length ? "," + sigmaEnd.join(",") : ""}][+${hypIds(ctx.workdir).length}HYP]`);
         await s0.execCommand("/coverage-record off");   // 关闭记录并落盘（09-20 解耦）
-        }, { tag: "hunt" });
-      } finally {
-        s0.close();
-        stageDone();
-        (s.state.data as Record<string, unknown>).huntSettled = true;   // 上游落定（含失败路径）：消费侧收干后退出
-        s.save();
-        wakeups.push();
-      }
-    } });
+    };
 
     // ---- verify 消费（system/hyp 状态驱动；与 hunt 并行、事件驱动——fish 09-21「下游消费优先」）----
     out.push({ name: "chains", parallelGroup: "audit-loop", run: async (s) => {

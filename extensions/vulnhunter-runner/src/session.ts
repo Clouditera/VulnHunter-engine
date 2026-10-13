@@ -52,6 +52,8 @@ export interface SessionHandle {
   mark(label: string): void;
   /** 当前上下文占用百分比（pi getContextUsage；未知返回 null） */
   contextPercent(): number | null;
+  /** 当前模型上下文窗口 token 数（pi getContextUsage；未知返回 null）——全文装配预算计算用（HALL-64 小模式） */
+  contextWindow(): number | null;
   /** 引导式树摘要：从当前叶摘要回 mark 节点（全程覆盖、无 keep-recent 窗口）。
    *  摘要结构遵循 fish 09-10 规则：xxx-start 任务定义 + 执行完成事实 + 核心论据与结论，丢弃中间细节。 */
   /** 压缩当前上下文（独立动词） */
@@ -377,6 +379,10 @@ export async function startSession(ctx: SessionCtx, opts: {
 
     contextPercent(): number | null {
       return (sess as any).getContextUsage?.()?.percent ?? null;
+    },
+
+    contextWindow(): number | null {
+      return (sess as any).getContextUsage?.()?.contextWindow ?? null;
     },
 
     async summarizeTo(label: string, opts2: { summaryLabel: string; guide?: string }) {
