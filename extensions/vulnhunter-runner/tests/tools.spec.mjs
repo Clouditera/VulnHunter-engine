@@ -37,17 +37,17 @@ await t("sandbox：report→get；坏 status 打回", async () => {
 // ---------------------------------------------------------------- hyp
 await t("hyp：create 需 binding.tag＋body；编号递增", async () => {
   const dir = tmp();
-  assert(isErr(await makeHypTool(ws(dir), {}).execute("", { op: "create", body: "x" })), "无 tag 应打回");
+  assert(isErr(await makeHypTool(ws(dir), {}).execute("", { op: "create", body: "x", novelty_basis: "首个", confidence: "med" })), "无 tag 应打回");
   const tool = makeHypTool(ws(dir), { tag: "hunt1" });
-  assert(isErr(await tool.execute("", { op: "create", body: "  " })), "空 body 应打回");
-  assert(txt(await tool.execute("", { op: "create", body: "## 主张\n锚点 src/a.c:1" })).includes("HYP-hunt1-H1"));
-  assert(txt(await tool.execute("", { op: "create", body: "## 主张2\n锚点 src/b.c:2" })).includes("HYP-hunt1-H2"));
+  assert(isErr(await tool.execute("", { op: "create", body: "  ", novelty_basis: "首个", confidence: "med" })), "空 body 应打回");
+  assert(txt(await tool.execute("", { op: "create", body: "## 主张\n锚点 src/a.c:1", novelty_basis: "首个 a.c 假设", confidence: "med" })).includes("HYP-hunt1-H1"));
+  assert(txt(await tool.execute("", { op: "create", body: "## 主张2\n锚点 src/b.c:2", novelty_basis: "与 H1 不同在于 b.c", confidence: "low" })).includes("HYP-hunt1-H2"));
   assert(readHyp(dir, "HYP-hunt1-H1")?.status === "pending");
 });
 await t("hyp：update 裁决——两项写齐转办结；单写不结；list 筛选", async () => {
   const dir = tmp(); const tool = makeHypTool(ws(dir), { tag: "hunt1" });
-  await tool.execute("", { op: "create", body: "x" });
-  await tool.execute("", { op: "create", body: "y" });
+  await tool.execute("", { op: "create", body: "x", novelty_basis: "首个 x", confidence: "med" });
+  await tool.execute("", { op: "create", body: "y", novelty_basis: "首个 y", confidence: "med" });
   assert(!isErr(await tool.execute("", { op: "update", id: "HYP-hunt1-H1", conclusion: "refuted" })));
   assert(readHyp(dir, "HYP-hunt1-H1").status === "pending", "未写齐不办结");
   assert(!isErr(await tool.execute("", { op: "update", id: "HYP-hunt1-H1", verdict: "不成立：校验在位" })));
