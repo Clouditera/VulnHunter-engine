@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # VulnHunter-engine 启动器——启动位置不限：可在目标项目目录，也可在任何目录启动后用路径指定目标（target）。
-# 本体 = 裸 pi：SYSTEM.md（主会话身份）与技能（skills/）经 PI_CODING_AGENT_DIR 自动发现；
-# vulnhunter skill 承载使用指南。
+# 本体 = 裸 pi：SYSTEM.md（主会话身份，基座）与技能（skills/）经 PI_CODING_AGENT_DIR 自动发现；
+# vulnhunter skill 承载使用指南；standalone/prompt.md 是独立运行环境包的提示词（平台不加载）。
 #
 # 扩展装配固定，不受本地 settings.json 影响（docs/engine-design.md §9 / Community architecture.md §3.6）：
 # - -ne 关掉自动发现与 Pi 内置扩展，再显式装入 vulnhunter-runner 与保留的内置扩展
@@ -17,4 +17,5 @@ exec "$DIR/node_modules/.bin/pi" \
   -e "$DIR/extensions/vulnhunter-runner/index.ts" \
   -e builtin:mcp -e builtin:codemode -e builtin:tool-search \
   --no-approve \
+  --append-system-prompt "$DIR/standalone/prompt.md" \
   "$@"
