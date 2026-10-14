@@ -16,6 +16,8 @@
     "test": "pnpm build && node --test tests/*.spec.mjs"
   },
   "dependencies": {
+    "@earendil-works/chord": "1.2.0",
+    "@earendil-works/pi-durable": "1.2.0",
     "yaml": "^2.9.0"
   },
   "peerDependencies": {

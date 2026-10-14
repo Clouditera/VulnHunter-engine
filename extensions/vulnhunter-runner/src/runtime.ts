@@ -9,6 +9,7 @@ import { buildPrompt, startSession } from "./session.ts";
 import { monitorState } from "./monitor-state.ts";
 import { ensureWebService } from "./web.ts";
 import type { AgentModelRegistry } from "./agent-model.ts";
+import type { RunEnv } from "./exec-env.ts";
 import YAML from "yaml";
 
 export interface NodeOptions {
@@ -37,6 +38,8 @@ export interface WorkflowContext {
   params: Record<string, string>;
   /** Optional per-agent in-memory model runtimes (inline/SaaS or pure-engine API). */
   modelRegistry?: AgentModelRegistry;
+  /** Optional execution environment for the agent's file and shell tools (exec-env.ts). */
+  env?: RunEnv;
   node(agentName: string, opts: NodeOptions): Promise<NodeResult>;
   report(message: string): void;
 }

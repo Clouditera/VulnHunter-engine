@@ -3,6 +3,7 @@ import { existsSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { Workflow, WorkflowContext } from "./runtime.ts";
+import type { RunEnv } from "./exec-env.ts";
 import {
   AgentModelRegistry,
   ModelConfigVersionConflictError,
@@ -17,6 +18,10 @@ export interface StartRunRequest {
   target: string;
   params?: Record<string, string>;
   agents?: Record<string, AgentModelSnapshot>;
+  /** Where the engine keeps its workspace (knowledge/, findings/, system/); default `<target>/.vulnforge`. */
+  workdir?: string;
+  /** Execution environment for the agent's tools; default: this machine. */
+  env?: RunEnv;
 }
 
 export type RunnerRunStatus = "starting" | "running" | "done" | "error";
@@ -85,6 +90,9 @@ function validateStartRequest(request: StartRunRequest): void {
     throw new ControlError(400, "invalid_request", "缺少 target");
   }
   validateParams(request.params);
+  if (request.workdir !== undefined && (typeof request.workdir !== "string" || !request.workdir.trim())) {
+    throw new ControlError(422, "invalid_workdir", "workdir 必须是非空路径");
+  }
   if (request.agents !== undefined && (!request.agents || typeof request.agents !== "object" || Array.isArray(request.agents))) {
     throw new ControlError(422, "invalid_model_config", "agents 必须是 agentKey 到完整模型快照的对象");
   }
@@ -149,7 +157,7 @@ export class WorkflowRunnerEngine {
     }
 
     const runId = makeRunId();
-    const workdir = join(target, ".vulnforge");
+    const workdir = request.workdir ? resolve(request.workdir) : join(target, ".vulnforge");
     const record: RunRecord = {
       runId,
       workflow: workflowName,
@@ -170,6 +178,7 @@ export class WorkflowRunnerEngine {
       workdir,
       params: validateParams(request.params),
       ...(modelRegistry ? { modelRegistry } : {}),
+      ...(request.env ? { env: request.env } : {}),
       node: () => { throw new Error("旧接口 node() 已废弃"); },
       report: (message) => {
         // Workflow reports are operational text; model credentials never enter this path.

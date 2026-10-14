@@ -32,6 +32,7 @@ import { parseModelSpec, resolveModel } from "./model-config.ts";
 import { assertModelSelection, type AgentModelRegistry } from "./agent-model.ts";
 import { sessionSettings } from "./session-settings.ts";
 import { sessionModelOptions } from "./session-model.ts";
+import { envToolDefinitions, type RunEnv } from "./exec-env.ts";
 
 /** 会话上下文（与 WorkflowContext 同形，避免循环依赖） */
 export interface SessionCtx {
@@ -43,6 +44,8 @@ export interface SessionCtx {
   runId?: string;
   /** 可选：按 agentKey 管理的内存模型 runtime（SaaS/纯引擎控制面） */
   modelRegistry?: AgentModelRegistry;
+  /** 可选：执行环境。给了则 read/write/edit/bash 作用在该环境（工作区目录除外），见 exec-env.ts */
+  env?: RunEnv;
 }
 
 export interface SessionHandle {
@@ -123,9 +126,10 @@ async function createSession(
     hyp: () => makeHypTool(ws, binding),
     finding: () => makeFindingTool(ws, binding),
   };
-  const customTools = stageTools(agentName)
-    .map((name) => factories[name]?.())
-    .filter((t): t is ToolDefinition => !!t);
+  const customTools = [
+    ...stageTools(agentName).map((name) => factories[name]?.()).filter((t): t is ToolDefinition => !!t),
+    ...(ctx.env ? envToolDefinitions(ctx.cwd, ctx.env) : []),
+  ];
 
   const model = await sessionModelOptions(ctx.engineDir, settingsManager, { modelSpec, modelRuntime, model: resolvedModel, thinking: modelThinking });
   const { session } = await createAgentSession({

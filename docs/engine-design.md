@@ -21,6 +21,7 @@ extensions/vulnhunter-runner/
   src/runtime.ts        workflow 原语：defineWorkflow / defineStagedWorkflow / runStages
   src/workflows/        registry.ts（唯一的已安装清单）、audit-lite.ts、lib.ts（编排件）
   src/session.ts        会话服务：SessionHandle
+  src/exec-env.ts       执行环境接缝：把 read/write/edit/bash 接到 ExecutionEnv（见 §3.1）
   src/executor/         并发执行器：容量、池、调度门
   src/nodes.ts          节点定义：每个节点的工具、技能、扩展
   src/tools/            对象工具：hyp、finding、sandbox、profiler
@@ -39,6 +40,15 @@ extensions/vulnhunter-runner/
   - `from` 断点续跑，`only` 单步重试；
   - 相邻同名 `parallelGroup` 的阶段并发执行（如 hunt ∥ verify 消费）。
 - audit-lite 阶段：onboard → build → research → compress → hunt（单会话多轮）→ chains（每条 HYP 一条研判链）。研判链在提供 `sandbox_cfg` 时走 dynamic-verify，否则走 static-verify。参数和停轮条件见 `audit-lite.ts` 文件头。
+
+### 3.1 执行环境
+
+默认情况下 agent 的文件工具和 shell 在引擎所在的机器上执行。给 `StartRunRequest`（或 `SessionCtx`）一个 `env: { env, localRoots }` 后，Pi 默认工具集里的 `read` / `write` / `edit` / `bash` 作用在 `env`（pi-env 的 `RemoteExecutionEnv` 或任何 `ExecutionEnv`）上：
+
+- `localRoots` 下的路径仍在引擎本机处理——引擎自己的状态（工作区目录：knowledge/、findings/、system/）在那里；其余路径和所有命令都去 `env`。`workdir` 可在 `StartRunRequest` 里单独指定，不必在目标项目目录下。
+- 引擎自己的进程环境变量不会传给 `env`：引擎持有凭证，不能进到运行不可信代码的机器。
+- 引擎只认 `ExecutionEnv` 接口，不管传输；传输由运行环境包提供（平台包：经平台转发的管道；独立包：本机或 pi-env 的 SSH）。
+- 节点不启用 `grep` / `find` / `ls`，所以只替换这四个工具。启用它们之前必须先给出基于 `env` 的实现（Pi 内建的会在本机调 rg / fd）。
 
 ## 4. 会话
 
