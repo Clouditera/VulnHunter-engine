@@ -17,7 +17,7 @@ import {
   createAgentSession, DefaultResourceLoader, SessionManager,
   type AgentSession, type AgentSessionEvent, type CreateAgentSessionOptions, type ModelRuntime, type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { NODES, type NodeSpec } from "./nodes.ts";
 import { lineage, OpsCounter, tasksCovering, loadLedgerRows } from "./ledger.ts";
@@ -46,6 +46,9 @@ export interface SessionCtx {
   modelRegistry?: AgentModelRegistry;
   /** 可选：执行环境。给了则 read/write/edit/bash 作用在该环境（工作区目录除外），见 exec-env.ts */
   env?: RunEnv;
+  /** Pi 会话文件目录。缺省 `<workdir>/system/sessions`——引擎的一切状态都在工作区里，
+   *  沙箱销毁重建后仍可续跑；显式给 sessionManager 的调用方（测试、嵌入式）不参与。 */
+  sessionsDir?: string;
 }
 
 export interface SessionHandle {
@@ -149,6 +152,13 @@ async function createSession(
   return { sess: session, spec, customTools };
 }
 
+/** Sessions live in the workspace (`<workdir>/system/sessions`) so a task can always resume. */
+export function defaultSessionManager(ctx: { cwd: string; workdir: string; sessionsDir?: string }): SessionManager {
+  const dir = ctx.sessionsDir ?? join(ctx.workdir, "system", "sessions");
+  mkdirSync(dir, { recursive: true });
+  return SessionManager.continueRecent(ctx.cwd, dir);
+}
+
 export { SUMMARY_SHAPE } from "./branch-summary.ts";
 
 /** 开启（或复活）一个节点会话 */
@@ -170,7 +180,9 @@ export async function startSession(ctx: SessionCtx, opts: {
   modelAgentKey?: string;
 }): Promise<SessionHandle> {
   const id = opts.id ?? `${opts.agent}-${Date.now()}`;
-  const sm = opts.sessionManager ?? (opts.sessionFile ? SessionManager.open(opts.sessionFile) : undefined);
+  const sm = opts.sessionManager ?? (opts.sessionFile
+    ? SessionManager.open(opts.sessionFile)
+    : defaultSessionManager(ctx));
   const bindingRef: ToolBinding = opts.binding ?? {};
   let modelRuntime = opts.modelRuntime;
   let resolvedModel = opts.resolvedModel;

@@ -19,7 +19,7 @@
     └── sessions-lineage.jsonl  ← 会话台账（血缘、任务、折叠）
 ```
 
-会话记录（含思考过程）在引擎仓 `sessions/--<目标路径slug>--/*.jsonl`。
+会话记录（含思考过程）在**工作区** `<workdir>/system/sessions/--<目标路径slug>--/*.jsonl`（平台任务模式即任务卷的 `output/system/sessions/`；随工作区迁移，沙箱重建后可续跑）。
 
 说明：`knowledge/` 是唯一自由文档区；HYP/finding/sandbox/profiler 等结构化对象由引擎工具独家落盘，内容不要手改。旧版队列目录（leads/todo/done）与 vuln-policy.md、build.md、profiler.yaml 已下线——口径并入 security.md、环境并入 env/、画像进系统侧。
 

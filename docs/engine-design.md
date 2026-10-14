@@ -81,7 +81,7 @@ extensions/vulnhunter-runner/
 
 ## 7. 产物与工作区
 
-- 工作区：`<目标>/.vulnforge/`。`knowledge/` 是唯一可自由读写的文档区；`findings/BUG-*/` 是漏洞出口；`system/` 是引擎内部状态（HYP、runs、sandbox、profiler、会话台账）。
+- 工作区：默认 `<目标>/.vulnforge/`（平台任务模式用 `StartRunRequest.workdir` 指到任务卷的 `output/`）。引擎的一切状态都在工作区里，**包括节点会话文件**（`system/sessions/`）：沙箱销毁重建后仍可续跑。`knowledge/` 是唯一可自由读写的文档区；`findings/BUG-*/` 是漏洞出口；`system/` 是引擎内部状态（HYP、runs、sandbox、profiler、会话台账）。
 - 结构化对象（HYP、finding、沙箱状态、项目画像）只能经对象工具（`src/tools/`）落盘，产物只增不删。
 - 完整布局见 `skills/vulnhunter/refs/runtime-layout.md`；平台读取这些产物的契约见 Community 仓 `docs/modules/engine-artifacts.md`。
 
