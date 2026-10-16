@@ -49,7 +49,11 @@ export interface SessionCtx {
   /** Pi 会话文件目录。缺省 `<workdir>/system/sessions`——引擎的一切状态都在工作区里，
    *  沙箱销毁重建后仍可续跑；显式给 sessionManager 的调用方（测试、嵌入式）不参与。 */
   sessionsDir?: string;
+  /** 模型调用失败后各次重试前的等待（毫秒），用尽即放弃（aborted）；缺省 10 秒、30 秒。 */
+  retryDelaysMs?: number[];
 }
+
+const RETRY_DELAYS_MS = [10_000, 30_000];
 
 export interface SessionHandle {
   readonly id: string;
@@ -206,8 +210,13 @@ export async function startSession(ctx: SessionCtx, opts: {
 
   // 操作计数（task 区间聚合：全节点通用，fish 09-15）——pi 的 end 事件不带 args，start 暂存参数
   const ops = new OpsCounter();
+  // 模型调用失败（限流、服务端错误、重试用尽）时 pi 不抛异常，只在助手消息上记 stopReason=error；
+  // 不看它，任务会被当成「正常结束」，研判就成了「未产出 finding = 驳回」。
+  const last: { assistant?: { stopReason?: string; errorMessage?: string } } = {};
+  const modelError = (): string | undefined => (last.assistant?.stopReason === "error" ? (last.assistant.errorMessage ?? "未知错误") : undefined);
   sess.subscribe((ev: AgentSessionEvent) => {
-    const e = ev as unknown as { type?: string; toolCallId?: string; toolName?: string; args?: unknown; result?: unknown; isError?: boolean };
+    const e = ev as unknown as { type?: string; toolCallId?: string; toolName?: string; args?: unknown; result?: unknown; isError?: boolean; message?: { role?: string; stopReason?: string; errorMessage?: string } };
+    if (e.type === "message_end" && e.message?.role === "assistant") last.assistant = e.message;
     if (e.type === "tool_execution_start") ops.onStart(String(e.toolCallId ?? ""), String(e.toolName ?? ""), e.args);
     else if (e.type === "tool_execution_end") {
       let r = "";
@@ -248,8 +257,11 @@ export async function startSession(ctx: SessionCtx, opts: {
             });
           }
           firstTry = false;
+          last.assistant = undefined;
           await sess.prompt(pending);
           await sess.waitForIdle();
+          const failed = modelError();
+          if (failed) throw new Error(`模型调用失败：${failed}`);
           // 任务终点 = 收尾条目（done 标之前那一叶）；起点 = 本任务链上最早的用户消息条目（fish 09-15）
           const endEntry = smP.getLeafId() ?? undefined;
           const startEntry = findTaskStart(smP, preLeaf, endEntry);
@@ -274,6 +286,8 @@ export async function startSession(ctx: SessionCtx, opts: {
             });
             return { aborted: true };
           }
+          const delays = ctx.retryDelaysMs ?? RETRY_DELAYS_MS;
+          await new Promise((resolve) => setTimeout(resolve, delays[Math.min(failures, delays.length) - 1] ?? 0));
           pending = "上一次执行因平台错误中断。请核对工作区现状，从未完成处继续。";
         }
       }
