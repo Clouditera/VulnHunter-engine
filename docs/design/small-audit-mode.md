@@ -77,14 +77,19 @@ def should_stop(rounds, coverage):   # rounds = 历史轮统计列表
         return STOP if effective_new(r) == 0 else CONTINUE
     return CONFIRM   # 下一轮为确认轮（最多 1 次）
 
-hard_cap = min(rounds_param_if_given, clamp(k * log10(loc), 2, 15))  # k=5 初始值，可配置 hunt_max_rounds
+# HALL-69：显式 rounds 优先（给了就只以它为准，0=无上限）；k ≤ 0 关闭自动上限
+if rounds_param_given:
+    hard_cap = Infinity if rounds_param == 0 else rounds_param
+else:
+    hard_cap = clamp(k * log10(loc), 2, 15)  # k=5 初始值，可配置 hunt_max_rounds；k ≤ 0 时 hard_cap = Infinity
 当前轮数 ≥ hard_cap → STOP（无条件）
+# 显式与自动都为 Infinity（完全无上限）时，启动 report 提示：只剩判定器熔断兜底
 ```
 
 ### 3.3 兼容策略
 
 - `hunt_zero_rounds` 保留但标记 deprecated：文档注明"已废弃，由有效产出判定取代"，代码保留读取但不参与判定；运行时若用户显式传了该参数，打 warning 日志。
-- `rounds` 显式封顶参数语义不变，且优先于自动上限。
+- `rounds` 显式封顶语义（HALL-69 修正）：给了就只以它为准，不再与自动上限取 min；`rounds=0` 表示显式无上限。`hunt_max_rounds`(k) ≤ 0 时关闭自动硬上限（auto=Infinity）。
 
 ## 4. 验收方式
 

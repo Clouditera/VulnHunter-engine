@@ -10,8 +10,10 @@
  *   trigger = 有效新增<3 / 近 2 轮转化率均为 0 / 有效新增 < 前轮一半
  *   未触发 → CONTINUE；触发且当前为确认轮 → 零有效新增即停；否则 → CONFIRM（下一轮为确认轮，最多 1 次）
  *
- * 硬上限 hard_cap = min(rounds 显式封顶, clamp(k*log10(loc), 2, 15))（k=5，参数 hunt_max_rounds 可配置）。
- * 显式 rounds 语义不变且优先于自动上限（rounds < 2 时也以 rounds 为准）。
+ * 硬上限 hardCap 语义（HALL-69 修正）：
+ *   - 显式 rounds 优先：给了就只以显式值为准，不再与 auto 取 min；rounds=0 表示显式无上限（Infinity）。
+ *   - 自动上限可关闭：k（hunt_max_rounds）≤ 0 时 auto = Infinity（关闭自动硬上限）；k 缺省 5，行为不变。
+ *   - 双无上限（auto 与显式都为 Infinity）时 workflow 启动 report 打提示——只剩判定器熔断兜底。
  *
  * 兼容（§3.3）：hunt_zero_rounds 保留读取但 deprecated——不参与判定；显式传入打 warning。
  *
@@ -42,9 +44,9 @@ export interface StopDecisionInput {
   coverageThreshold?: number;
   /** 目标 LOC（自动硬上限用；undefined 时不启用自动上限） */
   loc?: number;
-  /** 自动上限系数 k（hunt_max_rounds 参数，默认 5） */
+  /** 自动上限系数 k（hunt_max_rounds 参数，默认 5；≤ 0 关闭自动硬上限） */
   maxRoundsK?: number;
-  /** rounds 显式封顶（给了就参与 hard_cap 取 min，且优先于自动上限的下限保护） */
+  /** rounds 显式封顶（给了就只以它为准，不再与 auto 取 min；0 = 无上限） */
   explicitMaxRounds?: number;
   /** 当前已完成轮数（含本轮） */
   currentRound: number;
@@ -88,13 +90,15 @@ export function clamp(x: number, lo: number, hi: number): number {
 }
 
 /**
- * 硬上限 = min(显式封顶, clamp(k*log10(loc), 2, 15))。
- * 显式 rounds 优先：给定时即使小于 2 也以显式值为准（规格 §3.3：rounds 语义不变、优先）。
+ * 硬上限（HALL-69 修正版）：
+ *   - 显式 rounds 优先：给定时只以显式值为准（不再与 auto 取 min）；0 表示无上限（Infinity）。
+ *   - 自动上限 auto = clamp(k*log10(loc), 2, 15)；k ≤ 0 时 auto = Infinity（关闭自动硬上限）；无 loc 时亦 Infinity。
  */
 export function hardCap(opts: { loc?: number; k?: number; explicitMaxRounds?: number }): number {
+  if (opts.explicitMaxRounds !== undefined) return opts.explicitMaxRounds <= 0 ? Infinity : opts.explicitMaxRounds;
   const k = opts.k ?? 5;
-  const auto = opts.loc !== undefined && opts.loc > 0 ? clamp(k * Math.log10(opts.loc), 2, 15) : Infinity;
-  return opts.explicitMaxRounds !== undefined ? Math.min(opts.explicitMaxRounds, auto) : auto;
+  if (k <= 0) return Infinity;
+  return opts.loc !== undefined && opts.loc > 0 ? clamp(k * Math.log10(opts.loc), 2, 15) : Infinity;
 }
 
 // ---------------------------------------------------------------------------

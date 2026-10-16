@@ -18,8 +18,16 @@ ok(hardCap({ loc: 100, k: 5 }) === 10, "hardCap loc=100 → 10");
 ok(hardCap({ loc: 10, k: 5 }) === 5, "hardCap loc=10 → 5");
 ok(hardCap({ loc: 1, k: 5 }) === 2, "hardCap loc=1 → 下限 2");
 ok(hardCap({ k: 5 }) === Infinity, "无 loc → 无自动上限");
-ok(hardCap({ loc: 10, k: 5, explicitMaxRounds: 3 }) === 3, "显式 rounds 取 min");
+// HALL-69：显式 rounds 优先——给了就只以它为准，不再与 auto 取 min
+ok(hardCap({ loc: 10, k: 5, explicitMaxRounds: 3 }) === 3, "显式 rounds=3 → 3");
 ok(hardCap({ loc: 1000, k: 5, explicitMaxRounds: 1 }) === 1, "显式 rounds < 2 优先于下限保护");
+ok(hardCap({ loc: 1000, k: 5, explicitMaxRounds: 100 }) === 100, "显式 rounds=100 不再被 auto=15 截断");
+ok(hardCap({ loc: 1000, k: 5, explicitMaxRounds: 0 }) === Infinity, "显式 rounds=0 → 无上限");
+// HALL-69：k ≤ 0 关闭自动上限
+ok(hardCap({ loc: 1000, k: 0 }) === Infinity, "k=0 → 无自动上限");
+ok(hardCap({ loc: 1000, k: -1 }) === Infinity, "k<0 → 无自动上限");
+// 显式与自动双无上限 → Infinity（report 提示在 workflow 层）
+ok(hardCap({ k: 0, explicitMaxRounds: 0 }) === Infinity, "双无上限 → Infinity");
 ok(hardCap({ loc: 10, k: 2 }) === 2, "k 可配置（hunt_max_rounds）");
 
 // ---- conversion ----
@@ -28,6 +36,20 @@ ok(conversion({ effectiveNew: 0, hypCount: 0, findings: 0 }) === 0, "conversion 
 ok(conversion({ effectiveNew: 3 }) === null, "conversion 无回填 = null");
 
 const R = (effectiveNew, extra = {}) => ({ effectiveNew, ...extra });
+
+// ---- HALL-69：rounds=0 显式无上限 + k=0 关闭自动上限（shouldStop 路径） ----
+{
+  const d = shouldStop({ rounds: [R(5)], coverage: 10, currentRound: 50, loc: 1000, explicitMaxRounds: 0 });
+  ok(d.action === "continue", "rounds=0 → 50 轮也不触发硬上限");
+}
+{
+  const d = shouldStop({ rounds: [R(5)], coverage: 10, currentRound: 20, loc: 1000, maxRoundsK: 0 });
+  ok(d.action === "continue", "k=0 → 20 轮不触发硬上限");
+}
+{
+  const d = shouldStop({ rounds: [R(5)], coverage: 10, currentRound: 100, loc: 1000, explicitMaxRounds: 100 });
+  ok(d.action === "stop" && /硬上限/.test(d.reason), "rounds=100 → 100 轮仍到顶 stop");
+}
 
 // ---- 覆盖未达标 → CONTINUE ----
 {
