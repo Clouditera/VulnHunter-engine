@@ -12,8 +12,9 @@
  *
  * 硬上限 hardCap 语义（HALL-69 修正）：
  *   - 显式 rounds 优先：给了就只以显式值为准，不再与 auto 取 min；rounds=0 表示显式无上限（Infinity）。
- *   - 自动上限可关闭：k（hunt_max_rounds）≤ 0 时 auto = Infinity（关闭自动硬上限）；k 缺省 5，行为不变。
- *   - 双无上限（auto 与显式都为 Infinity）时 workflow 启动 report 打提示——只剩判定器熔断兜底。
+ *   - 自动上限默认关闭（HALL-69 追加）：k（hunt_max_rounds）缺省 0，≤ 0 时 auto = Infinity；
+ *     显式传 k ≥ 1 可重新打开（clamp(k·log10(loc), 2, 15)）。
+ *   - 完全无上限（无显式 rounds 且 auto=Infinity）时 workflow 启动 report 提示——只剩判定器熔断兜底。
  *
  * 兼容（§3.3）：hunt_zero_rounds 保留读取但 deprecated——不参与判定；显式传入打 warning。
  *
@@ -44,7 +45,7 @@ export interface StopDecisionInput {
   coverageThreshold?: number;
   /** 目标 LOC（自动硬上限用；undefined 时不启用自动上限） */
   loc?: number;
-  /** 自动上限系数 k（hunt_max_rounds 参数，默认 5；≤ 0 关闭自动硬上限） */
+  /** 自动上限系数 k（hunt_max_rounds 参数，默认 0=关闭；≥1 启用 clamp(k·log10(loc),2,15)） */
   maxRoundsK?: number;
   /** rounds 显式封顶（给了就只以它为准，不再与 auto 取 min；0 = 无上限） */
   explicitMaxRounds?: number;
@@ -90,13 +91,14 @@ export function clamp(x: number, lo: number, hi: number): number {
 }
 
 /**
- * 硬上限（HALL-69 修正版）：
+ * 硬上限（HALL-69 修正版 + 默认值追加）：
  *   - 显式 rounds 优先：给定时只以显式值为准（不再与 auto 取 min）；0 表示无上限（Infinity）。
- *   - 自动上限 auto = clamp(k*log10(loc), 2, 15)；k ≤ 0 时 auto = Infinity（关闭自动硬上限）；无 loc 时亦 Infinity。
+ *   - 自动上限 auto = clamp(k*log10(loc), 2, 15)；k 缺省 0（默认关闭），≤ 0 时 auto = Infinity；
+ *     显式传 k ≥ 1 可重新打开；无 loc 时亦 Infinity。
  */
 export function hardCap(opts: { loc?: number; k?: number; explicitMaxRounds?: number }): number {
   if (opts.explicitMaxRounds !== undefined) return opts.explicitMaxRounds <= 0 ? Infinity : opts.explicitMaxRounds;
-  const k = opts.k ?? 5;
+  const k = opts.k ?? 0;
   if (k <= 0) return Infinity;
   return opts.loc !== undefined && opts.loc > 0 ? clamp(k * Math.log10(opts.loc), 2, 15) : Infinity;
 }

@@ -8,7 +8,7 @@
  * hunt（fish 09-11 定稿）：并发锁 1 单会话逐轮；每轮选一个千行级小功能点精读；
  * 停轮（HALL-64 有效产出判定器，src/stop-decider.ts）：覆盖≥阈值 且（有效新增<3 / 近2轮转化率=0 / 有效新增边际减半）
  * → 确认轮 → 确认轮零有效新增即停；硬上限语义（HALL-69）：显式 rounds 优先（给了就只以它为准，0=无上限），
- * 自动上限=clamp(k·log10(loc),2,15)，hunt_max_rounds(k)≤0 关闭自动上限；双无上限时启动 report 提示仅靠判定器熔断；
+ * 自动上限=clamp(k·log10(loc),2,15)，hunt_max_rounds(k) 缺省 0=默认关闭（≥1 启用）；无上限时启动 report 提示仅靠判定器熔断；
  * hunt_zero_rounds 已 deprecated：保留读取不参与判定，显式传入打 warning。
  * 摘要两档：每轮结束小摘要（ΣhuntN），上下文占用>60% 时对历史全 hunt 大轮摘要（Σhunt1-N）。
  *
@@ -81,7 +81,7 @@ const liteWorkflow = defineStagedWorkflow({
       rounds: ctx.params.rounds ?? "（自动硬上限 clamp(5·log10(loc),2,15)，k≤0 关闭）",
       hunt_mode: ctx.params.hunt_mode ?? "积累制",
       hunt_coverage_threshold: `${ctx.params.hunt_coverage_threshold ?? "90"}%`,
-      hunt_max_rounds: ctx.params.hunt_max_rounds ?? "5（k 系数）",
+      hunt_max_rounds: ctx.params.hunt_max_rounds ?? "0（默认关闭自动上限）",
       hunt_zero_rounds: ctx.params.hunt_zero_rounds !== undefined ? `${ctx.params.hunt_zero_rounds}（已废弃，不参与判定）` : "（已废弃）",
       audit_small_max_loc: ctx.params.audit_small_max_loc ?? "5000",
       chain_filter: ctx.params.chain_filter ?? "全部",
@@ -297,7 +297,7 @@ const liteWorkflow = defineStagedWorkflow({
         if (ctx.params.hunt_zero_rounds !== undefined) {
           ctx.report(`⚠ 参数 hunt_zero_rounds 已废弃（deprecated）：不再参与停轮判定，由有效产出判定器取代（收到值 ${ctx.params.hunt_zero_rounds}，已忽略）`);
         }
-        const maxRoundsK = ctx.params.hunt_max_rounds !== undefined ? Number(ctx.params.hunt_max_rounds) : 5;
+        const maxRoundsK = ctx.params.hunt_max_rounds !== undefined ? Number(ctx.params.hunt_max_rounds) : 0;
         const explicitRounds = ctx.params.rounds !== undefined ? Number(ctx.params.rounds) : undefined;
         const d = s.state.data;
         // 覆盖数据一律读 coverage 扩展的产物（快照 JSON）——09-20 解耦，runner 不再直接聚合事件
@@ -327,9 +327,9 @@ const liteWorkflow = defineStagedWorkflow({
         };
         const cap = hardCap({ loc: locOf(), k: maxRoundsK, explicitMaxRounds: explicitRounds });
         ctx.report(`hunt 轮数硬上限：${cap === Infinity ? "无上限" : cap}${explicitRounds !== undefined ? `（显式 rounds=${explicitRounds}${explicitRounds <= 0 ? "，无上限" : ""}）` : ""}`);
-        // HALL-69：完全无上限（显式与自动都为 Infinity）时明确提示——只剩有效产出判定器熔断兜底
-        if (cap === Infinity && ((explicitRounds !== undefined && explicitRounds <= 0) || maxRoundsK <= 0)) {
-          ctx.report("⚠ hunt 无任何轮数硬上限（rounds=0 或 hunt_max_rounds≤0）：只有有效产出判定器熔断兜底，请确认覆盖阈值与停轮触发条件配置合理");
+        // HALL-69：无任何硬上限时（现已是默认路径——k 缺省 0 关闭自动上限）明确提示——只剩有效产出判定器熔断兜底
+        if (cap === Infinity) {
+          ctx.report("⚠ hunt 无轮数硬上限（hunt_max_rounds 未启用或 rounds=0）：仅有效产出判定器熔断兜底，请确认覆盖阈值与停轮触发条件配置合理");
         }
         let roundStats: RoundStat[] = (d.roundStats as RoundStat[] | undefined) ?? [];   // 断点续跑：复用历史轮统计
         let pendingConfirm = false;   // 上一轮判定 CONFIRM → 本轮为确认轮（最多 1 次）

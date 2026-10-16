@@ -12,12 +12,13 @@ function ok(cond, name) {
 
 // ---- clamp / hardCap ----
 ok(clamp(5, 2, 15) === 5 && clamp(1, 2, 15) === 2 && clamp(99, 2, 15) === 15, "clamp 边界");
-// k=5：loc=1000 → 5*3=15 → clamp 15；loc=100 → 10 → 10；loc=10 → 5 → 5；loc=1 → 0 → 2
-ok(hardCap({ loc: 1000, k: 5 }) === 15, "hardCap loc=1000 → 15");
-ok(hardCap({ loc: 100, k: 5 }) === 10, "hardCap loc=100 → 10");
-ok(hardCap({ loc: 10, k: 5 }) === 5, "hardCap loc=10 → 5");
-ok(hardCap({ loc: 1, k: 5 }) === 2, "hardCap loc=1 → 下限 2");
-ok(hardCap({ k: 5 }) === Infinity, "无 loc → 无自动上限");
+// 缺省 k=0（HALL-69 追加：默认关闭自动上限）：loc=1000/k=5 显式 → 15；k≤0 → Infinity
+ok(hardCap({ loc: 1000 }) === Infinity, "缺省 k=0 → 默认无自动上限");
+ok(hardCap({ loc: 1000, k: 5 }) === 15, "显式 k=5 重新打开上限：loc=1000 → 15");
+ok(hardCap({ loc: 100, k: 5 }) === 10, "k=5：loc=100 → 10");
+ok(hardCap({ loc: 10, k: 5 }) === 5, "k=5：loc=10 → 5");
+ok(hardCap({ loc: 1, k: 5 }) === 2, "k=5：loc=1 → 下限 2");
+ok(hardCap({}) === Infinity, "无 loc 无 k → 无上限");
 // HALL-69：显式 rounds 优先——给了就只以它为准，不再与 auto 取 min
 ok(hardCap({ loc: 10, k: 5, explicitMaxRounds: 3 }) === 3, "显式 rounds=3 → 3");
 ok(hardCap({ loc: 1000, k: 5, explicitMaxRounds: 1 }) === 1, "显式 rounds < 2 优先于下限保护");
@@ -45,6 +46,16 @@ const R = (effectiveNew, extra = {}) => ({ effectiveNew, ...extra });
 {
   const d = shouldStop({ rounds: [R(5)], coverage: 10, currentRound: 20, loc: 1000, maxRoundsK: 0 });
   ok(d.action === "continue", "k=0 → 20 轮不触发硬上限");
+}
+{
+  // 缺省 maxRoundsK（=0）：同样无自动上限
+  const d = shouldStop({ rounds: [R(5)], coverage: 10, currentRound: 50, loc: 1000 });
+  ok(d.action === "continue", "缺省 k=0 → 50 轮也不触发硬上限");
+}
+{
+  // 显式 k≥1 重新打开自动上限
+  const d = shouldStop({ rounds: [R(5)], coverage: 10, currentRound: 15, loc: 1000, maxRoundsK: 5 });
+  ok(d.action === "stop" && /硬上限/.test(d.reason), "显式 k=5 重新打开上限 → 15 轮到顶 stop");
 }
 {
   const d = shouldStop({ rounds: [R(5)], coverage: 10, currentRound: 100, loc: 1000, explicitMaxRounds: 100 });
@@ -105,9 +116,9 @@ const R = (effectiveNew, extra = {}) => ({ effectiveNew, ...extra });
   ok(d.action === "continue", "健康轮 → continue");
 }
 
-// ---- 硬上限无条件 STOP（覆盖未达标也停） ----
+// ---- 硬上限无条件 STOP（覆盖未达标也停；显式 k≥1 打开上限后生效） ----
 {
-  const d = shouldStop({ rounds: [R(5)], coverage: 10, currentRound: 15, loc: 1000 });
+  const d = shouldStop({ rounds: [R(5)], coverage: 10, currentRound: 15, loc: 1000, maxRoundsK: 5 });
   ok(d.action === "stop" && /硬上限/.test(d.reason), "达到硬上限 → stop");
 }
 
