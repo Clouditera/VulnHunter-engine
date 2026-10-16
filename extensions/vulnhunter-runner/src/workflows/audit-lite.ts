@@ -13,12 +13,13 @@
  * 标记语法：docs/session-marks.md（<任务>-start[成分] / <任务>-done[成分][+产出]，Σ=已摘要）。
  *
  * 参数（ctx.params）：rounds / chain_filter / chain_concurrency / hunt_coverage_threshold / hunt_zero_rounds /
- * hunt_mode（fresh=每轮从 init 重开）/ coverage_include / coverage_exclude / sandbox_cfg / skip_ev / model_concurrency /
+ * hunt_mode（fresh=每轮从 init 重开）/ coverage_include / coverage_exclude / mode（dynamic=含沙箱复现）/ sandbox_cfg（独立使用：自备沙箱的 ssh）/ skip_ev / model_concurrency /
  * 模型：model（全局）/ model_init / model_hunt / model_verify（按池），语法 provider/model[:thinking]（见 model-config.ts）。
  */
 
 import { defineStagedWorkflow, runStages, type StageCtx, type StageDef, type WorkflowContext } from "../runtime.ts";
 import { createExecutor } from "../executor/index.ts";
+import { isDynamic } from "../params.ts";
 import { createWakeQueue, electVerifyCandidates, runHypChain, runVerifyConsumer } from "./lib.ts";
 import { buildPrompt, forkFromLabel, type SessionHandle } from "../session.ts";
 import { monitorState } from "../monitor-state.ts";
@@ -68,7 +69,7 @@ const liteWorkflow = defineStagedWorkflow({
       chain_filter: ctx.params.chain_filter ?? "全部",
       chain_concurrency: ctx.params.chain_concurrency ?? "3",
       model_concurrency: ctx.params.model_concurrency ?? "3（模型容量许可）",
-      sandbox: ctx.params.sandbox_cfg ?? "（无，纯静态）",
+      sandbox: isDynamic(ctx.params) ? (ctx.params.sandbox_cfg ?? "（执行环境即沙箱）") : "（无，纯静态）",
       coverage_include: ctx.params.coverage_include ?? ".",
       coverage_exclude: ctx.params.coverage_exclude ?? "（无）",
     };
@@ -83,7 +84,7 @@ const liteWorkflow = defineStagedWorkflow({
     const exec = createExecutor();
     const modelPermits = Math.max(1, Number(ctx.params.model_concurrency || "3"));
     exec.bindCapacity("model", { permits: modelPermits });
-    exec.bindCapacity("sandbox", { permits: ctx.params.sandbox_cfg ? 1 : 0 });
+    exec.bindCapacity("sandbox", { permits: isDynamic(ctx.params) ? 1 : 0 });
     const initPool = exec.declarePool("init", { concurrency: 1, locked: true, priority: 40, needs: ["model"] });
     const huntPool = exec.declarePool("hunt", { concurrency: 1, locked: true, priority: 30, needs: ["model"] });
     const verifyPool = exec.declarePool("verify", { concurrency: chainConc, priority: 10, needs: ["model"] });
@@ -257,7 +258,7 @@ const liteWorkflow = defineStagedWorkflow({
         || s.state.stages.hunt === "done"
         || s.state.stages.hunt === "failed";
       // 动态门槛可见性（fail-closed 收口）：沙箱状态未知时明确告警，不静默（09-17 ev 静默缺陷教训）
-      if (ctx.params.sandbox_cfg && readSandboxState(ctx.workdir).status === "unknown") {
+      if (isDynamic(ctx.params) && readSandboxState(ctx.workdir).status === "unknown") {
         ctx.report("⚠ 沙箱状态未知（unknown）——动态链将自行探测并回报 sandbox；请确认 build 阶段已执行 sandbox report");
       }
       const unsub = exec.on((e) => { if (e.type === "task.end") wakeups.push(); });   // 释放槽位 → 唤醒

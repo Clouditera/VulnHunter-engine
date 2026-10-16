@@ -22,6 +22,8 @@ export interface StartRunRequest {
   workdir?: string;
   /** Execution environment for the agent's tools; default: this machine. */
   env?: RunEnv;
+  /** Continue an earlier run of this workflow (its state is in `workdir/system/runs/`): same id, from this stage. */
+  resume?: { runId: string; from: string };
 }
 
 export type RunnerRunStatus = "starting" | "running" | "done" | "error";
@@ -156,7 +158,7 @@ export class WorkflowRunnerEngine {
       }
     }
 
-    const runId = makeRunId();
+    const runId = request.resume?.runId ?? makeRunId();
     const workdir = request.workdir ? resolve(request.workdir) : join(target, ".vulnforge");
     const record: RunRecord = {
       runId,
@@ -190,7 +192,7 @@ export class WorkflowRunnerEngine {
     record.done = Promise.resolve()
       .then(async () => {
         record.status = "running";
-        await workflow.run(ctx, { runId });
+        await workflow.run(ctx, request.resume ? { runId, from: request.resume.from } : { runId });
         record.status = "done";
       })
       .catch((error) => {

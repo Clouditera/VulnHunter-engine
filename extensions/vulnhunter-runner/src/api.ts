@@ -12,3 +12,5 @@ export type { AgentModelSnapshot, AgentModelSelection } from "./agent-model.ts";
 
 export { AgentModelRuntime, assertModelSelection } from "./agent-model.ts";
 export { sessionSettings } from "./session-settings.ts";
+export { AUDIT_MODEL_POOLS, auditModelSnapshots } from "./extension-models.ts";
+export { listFindings, type FindingRecord } from "./tools/finding.ts";

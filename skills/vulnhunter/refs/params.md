@@ -6,6 +6,7 @@
 |---|---|---|
 | vuln_focus | 无（全方向） | 漏洞关注方向，如"内存安全与输入解析问题"；建议给 |
 | sandbox_cfg | 无 | 沙箱 ssh 连接配置（如 `ssh sandbox-x`）；给了=研判含沙箱复现（dynamic-verify→ev-assess），不给=纯静态（static-verify） |
+| mode | static | `dynamic`=研判含沙箱复现，且命令直接在执行环境（沙箱）里跑，不需要 ssh（平台任务用这个）；与 sandbox_cfg 二选一 |
 | skip_ev | 无 | 置 "1"=显式跳过 ev-assess：只做研判与沙箱复现，不做影响评估 |
 | rounds | 无 | hunt 轮次显式封顶（默认无上限——停轮=覆盖≥阈值 且 连续 x 轮零新增） |
 | chain_filter | 全部 | 每轮前 K 条 HYP 走研判链，限成本用（如 "2"） |

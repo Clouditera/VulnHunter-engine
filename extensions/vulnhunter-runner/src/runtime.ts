@@ -8,6 +8,7 @@ import type { ToolBinding } from "./tools/common.ts";
 import { buildPrompt, startSession } from "./session.ts";
 import { monitorState } from "./monitor-state.ts";
 import { ensureWebService } from "./web.ts";
+import { isDynamic } from "./params.ts";
 import type { AgentModelRegistry } from "./agent-model.ts";
 import type { RunEnv } from "./exec-env.ts";
 import YAML from "yaml";
@@ -34,7 +35,7 @@ export interface WorkflowContext {
   cwd: string;
   engineDir: string;
   workdir: string;
-  /** scan 启动参数（vuln_focus / sandbox_cfg / user_instr / output_lang / ...） */
+  /** scan 启动参数（vuln_focus / mode / sandbox_cfg / user_instr / output_lang / ...） */
   params: Record<string, string>;
   /** Optional per-agent in-memory model runtimes (inline/SaaS or pure-engine API). */
   modelRegistry?: AgentModelRegistry;
@@ -201,7 +202,7 @@ export async function runStages(wf: StagedWorkflow, ctx: WorkflowContext, opts: 
 
   // 观察台：env 开门即起（VULNHUNTER_WEB/PORT/HOST），驱动跑批也能被观察（fish 09-14）
   ensureWebService();
-  monitorState.runStart({ runId, workflow: wf.name, workdir: ctx.workdir, cwd: ctx.cwd, startedAt: Date.now(), status: "running", sandbox: !!ctx.params.sandbox_cfg, config: wf.configView?.(ctx) });
+  monitorState.runStart({ runId, workflow: wf.name, workdir: ctx.workdir, cwd: ctx.cwd, startedAt: Date.now(), status: "running", sandbox: isDynamic(ctx.params), config: wf.configView?.(ctx) });
 
   const runOne = async (st: StageDef) => {
     ctx.report(`—— 阶段 ${st.name} ——`);
