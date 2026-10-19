@@ -45,11 +45,18 @@ const wf = defineStagedWorkflow({
 });
 
 if (mode === "resume-auto") {
-  // 复刻 index.ts resume 自动定位：failed | interrupted 同权；未收敛的历史 run 同规则预判（不落盘）
+  // 复刻 index.ts 生产路径：readRuns 投影（只挑 runId/workflow/stages/data 四字段，不读完整 JSON）
+  // → failed|interrupted 定位 → 未收敛历史 run 对副本同规则预判（不落盘）。
+  // 防回归（评审 f5fa8a48）：投影缺 data 时预判抛 TypeError；定位读未收敛原对象时永远定位不到。
   const statePath = join(workdir, "system", "runs", `mock-wf-${runId}.json`);
-  const st = JSON.parse(readFileSync(statePath, "utf-8"));
-  const failed = Object.entries(st.stages as Record<string, string>).find(([, v]) => v === "failed" || v === "interrupted")?.[0]
-    ?? (convergeInterrupted(st), Object.entries(st.stages as Record<string, string>).find(([, v]) => v === "failed" || v === "interrupted")?.[0]);
+  const j = JSON.parse(readFileSync(statePath, "utf-8"));
+  const last: any = { runId: j.runId, workflow: j.workflow, stages: j.stages ?? {}, data: j.data ?? {} };   // = readRuns 投影输出
+  let failed = Object.entries(last.stages as Record<string, string>).find(([, v]) => v === "failed" || v === "interrupted")?.[0];
+  if (!failed) {
+    const copy = JSON.parse(JSON.stringify(last));
+    convergeInterrupted(copy);
+    failed = Object.entries(copy.stages as Record<string, string>).find(([, v]) => v === "failed" || v === "interrupted")?.[0];
+  }
   console.log(`LOCATED_FROM=${failed ?? ""}`);
   if (!failed) { console.error("未定位到 failed/interrupted 阶段"); process.exit(2); }
   await runStages(wf, ctx, { runId, from: failed });

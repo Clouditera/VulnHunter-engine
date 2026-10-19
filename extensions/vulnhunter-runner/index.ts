@@ -40,14 +40,15 @@ const WF_DOC = `\
 - audit-lite：onboard→build→research→hunt 多轮→每条 HYP 走研判链。
 常用 params：vuln_focus（漏洞关注方向，建议给）、coverage_include / coverage_exclude（审计范围/覆盖率口径，缺省全项目；支持 *.ext 通配）、sandbox_cfg（沙箱 ssh 配置，给了就走 dynamic-verify 含沙箱复现，不给就是纯静态 static-verify）、rounds / chain_filter（试验与限成本用，一般不用给）。`;
 
-function readRuns(workdir: string): Array<{ runId: string; workflow: string; stages: Record<string, string> }> {
+function readRuns(workdir: string): Array<{ runId: string; workflow: string; stages: Record<string, string>; data: Record<string, unknown> }> {
   const dir = join(workdir, "system", "runs");
   if (!existsSync(dir)) return [];
   const out = [];
   for (const f of readdirSync(dir).filter((f) => f.endsWith(".json"))) {
     try {
       const j = JSON.parse(readFileSync(join(dir, f), "utf-8"));
-      out.push({ runId: j.runId ?? f.replace(/\.json$/, ""), workflow: j.workflow ?? "?", stages: j.stages ?? {} });
+      // data 透传：resume 首次定位的 convergeInterrupted 预判要读 data.stageTimes（缺了会抛 TypeError）
+      out.push({ runId: j.runId ?? f.replace(/\.json$/, ""), workflow: j.workflow ?? "?", stages: j.stages ?? {}, data: j.data ?? {} });
     } catch { /* 跳过损坏文件 */ }
   }
   return out;
@@ -153,9 +154,14 @@ export default function (pi: ExtensionAPI) {
           const runs = readRuns(workdir).filter((r) => r.workflow === name);
           const last = runs[runs.length - 1];
           if (!last) bad(`没找到 ${name} 的历史 run（workdir/system/runs/ 为空），无法续跑——请用 op=run 全新启动`);
-          const failed = Object.entries(last.stages).find(([, v]) => v === "failed" || v === "interrupted")?.[0]
-            // run-state 尚未被 runStages 收敛（上次进程 kill 后首次 resume）：同规则预判，不落盘
-            ?? (convergeInterrupted(JSON.parse(JSON.stringify(last))), Object.entries(last.stages).find(([, v]) => v === "failed" || v === "interrupted")?.[0]);
+          let failed = Object.entries(last.stages).find(([, v]) => v === "failed" || v === "interrupted")?.[0];
+          if (!failed) {
+            // run-state 尚未被 runStages 收敛（上次进程 kill 后首次 resume）：对副本同规则预判（不落盘），
+            // 定位必须读收敛后的副本（原对象 stages 不变，否则永远定位不到）
+            const copy = JSON.parse(JSON.stringify(last)) as import("./src/runtime.ts").RunState;
+            convergeInterrupted(copy);
+            failed = Object.entries(copy.stages).find(([, v]) => v === "failed" || v === "interrupted")?.[0];
+          }
           runOpts = { runId: last.runId, from: args.from ?? failed };
           if (!runOpts.from) bad(`上次 run（runId=${last.runId}）没有 failed / interrupted 阶段（阶段状态：${Object.entries(last.stages).map(([k, v]) => k + ":" + v).join(" ")}）。要重跑某阶段请显式给 from`);
         }

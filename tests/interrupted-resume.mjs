@@ -51,7 +51,7 @@ ok(Array.isArray(st1.data.roundHyps?.hunt3), "roundHyps.hunt3 已随 save 先于
 const marks1 = existsSync(join(work1, "marks.txt")) ? readFileSync(join(work1, "marks.txt"), "utf-8").trim().split("\n") : [];
 ok(!marks1.includes("hunt3-done"), `hunt3-done mark 未写出（kill 落在 save 与 mark 之间；marks=${marks1.join(",")}）`);
 
-// ---- 第 2 轮：同 runId 重启，无 from（复刻 index.ts resume 自动定位 failed|interrupted）----
+// ---- 第 2 轮：同 runId 重启，无 from（复刻 index.ts 生产路径：readRuns 投影 → 预判收敛 → 定位）----
 const home2 = mkdtempSync(join(tmpdir(), "vh-home-"));
 const child2 = spawn(process.execPath, [driver, work1, "run1", "resume-auto"], {
   env: { ...process.env, HOME: home2, NODE_PATH: join(extDir, "node_modules") },
@@ -63,7 +63,7 @@ child2.stderr.on("data", (b) => { out2 += b; });
 const code2 = await new Promise((r) => child2.on("exit", r));
 ok(code2 === 0, `续跑子进程正常退出（code=${code2}）${code2 === 0 ? "" : "\n" + out2}`);
 const located = (out2.match(/^LOCATED_FROM=(.*)$/m) || [])[1];
-ok(located === "hunt", `resume 无 from 自动定位到 hunt（实际：${located ?? "未定位"}）`);
+ok(located === "hunt", `resume 无 from 经 readRuns 投影定位到 hunt（实际：${located ?? "未定位"}）——复刻生产路径，防 readRuns 投影缺陷回归`);
 const observed = (out2.match(/^HUNT_STATUS_AT_RERUN=(.*)$/m) || [])[1];
 ok(observed === "interrupted", `加载时收敛：hunt 重跑前状态=interrupted（实际：${observed ?? "未观测"}）`);
 
