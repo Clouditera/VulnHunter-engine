@@ -680,15 +680,15 @@ function render() {
   const stageTimes = (state.data && state.data.stageTimes) || {};
   const cfg = run.config ?? {};
   const cur = run.status === "running" ? run.currentStage : null;
-  const failedStage = order.find((k) => stagesObj[k] === "failed");
+  const failedStage = order.find((k) => stagesObj[k] === "failed" || stagesObj[k] === "interrupted");
   const hunting = cur === "hunt";
   const dynamic = run.sandbox === true;
   const elapsed = (run.endedAt ?? now) - run.startedAt;
 
   const stageMeta = (name) => {
     const stt = stagesObj[name] ?? "pending";
-    const label = { done: "已完成", failed: "失败", pending: cur === name ? "进行中" : "待开始", skipped: "已跳过" }[stt] ?? "未知";
-    const ui = stt === "failed" ? "error" : cur === name ? "running" : stt === "done" ? "done" : "pending";
+    const label = { done: "已完成", failed: "失败", interrupted: "已中断", pending: cur === name ? "进行中" : "待开始", skipped: "已跳过" }[stt] ?? "未知";
+    const ui = stt === "failed" || stt === "interrupted" ? "error" : cur === name ? "running" : stt === "done" ? "done" : "pending";
     let time = null;
     const t = stageTimes[name];
     if (t) time = cur === name && run.status === "running" ? now - new Date(t.start).getTime() : t.ms;
@@ -699,6 +699,7 @@ function render() {
   // hunt 数据
   const arrLen = (v) => Array.isArray(v) ? v.length : 0;
   const roundHyps = (state.data && state.data.roundHyps) || {};
+  const roundInterrupted = (state.data && state.data.roundInterrupted) || {};
   const roundKeys = Object.keys(roundHyps).sort((a, b) => Number(a.replace(/\\D+/g, "")) - Number(b.replace(/\\D+/g, "")));
   const hypTotal = roundKeys.reduce((n, k) => n + arrLen(roundHyps[k]), 0);
   const doneRounds = (state.data && state.data.huntRound) || roundKeys.length;
@@ -735,18 +736,18 @@ function render() {
   // hunt 面板
   const covPct = cov && cov.pct != null ? cov.pct : null;
   const roundsHtml = roundKeys.length
-    ? roundKeys.map((k) => { const n = arrLen(roundHyps[k]); const rn = Number(k.replace(/\\D+/g, "")); return \`<div class="round \${n === 0 ? "zero" : ""}"><small>\${rn}</small>\${n}</div>\`; }).join("") + (hunting ? \`<div class="round inprogress"><small>\${doneRounds + 1}</small>·</div>\` : "")
+    ? roundKeys.map((k) => { const n = arrLen(roundHyps[k]); const rn = Number(k.replace(/\\D+/g, "")); return \`<div class="round \${n === 0 ? "zero" : ""} \${roundInterrupted[k] ? "failedround" : ""}" title="\${roundInterrupted[k] ? esc("中断：" + roundInterrupted[k].reason) : ""}"><small>\${rn}</small>\${roundInterrupted[k] ? "×" : n}</div>\`; }).join("") + (hunting ? \`<div class="round inprogress"><small>\${doneRounds + 1}</small>·</div>\` : "")
     : \`<span class="muted small">尚无轮次记录</span>\`;
   const huntNote = (stagesObj.hunt === "pending" || stagesObj.hunt === "skipped" || stagesObj.hunt === undefined)
     ? \`<div class="notebox info">待开始 · init 阶段完成后进入逐轮精读。</div>\`
     : hunting
     ? \`<div class="notebox info"><strong>正在精读 · hunt\${doneRounds + 1}</strong><br>已完成 \${doneRounds} 轮。<button class="link" data-action="seshow" data-file="\${esc((state.sessions && state.sessions.init) || "")}">init · 打开当前会话 →</button></div>\`
-    : stagesObj.hunt === "failed"
-      ? \`<div class="notebox error"><strong>hunt 阶段失败</strong><br>\${esc(run.note ?? "")}</div>\`
+    : stagesObj.hunt === "failed" || stagesObj.hunt === "interrupted"
+      ? \`<div class="notebox error"><strong>hunt 阶段\${stagesObj.hunt === "interrupted" ? "被中断" : "失败"}</strong><br>\${esc(run.note ?? "")}</div>\`
       : stopEv
         ? \`<div class="notebox"><strong>\${esc(stopEv.msg)}</strong></div>\`
         : \`<div class="notebox info">已结束 · 停轮原因未上报（历史 run 不展示本进程事件）。</div>\`;
-  const huntPanel = \`<section class="panel \${hunting ? "active" : stagesObj.hunt === "failed" ? "failed" : ""}"><div class="panelhead"><div class="row spread"><div class="row"><span class="index">0\${order.indexOf("hunt") + 1}</span><h2 class="mono">hunt</h2></div>\${badge(stageMeta("hunt").label, stageMeta("hunt").ui)}</div><p class="subtitle">串行执行 · 1 个会话 · 非运行池</p></div><div class="panelbody huntbody"><div><div class="metricrow"><div class="metric"><strong>\${hunting ? doneRounds + 1 : doneRounds || "—"}</strong><span>轮</span><p>\${hunting ? "当前轮次" : "已完成轮次"}</p></div><div class="metric"><strong>\${hypTotal}</strong><span>HYP</span><p>累计产出 · 不等于已证实</p></div></div><div class="row spread small"><span class="muted">逐轮新增 HYP</span><button class="link" data-action="rounds">产出详情 →</button></div><div class="rounds" style="grid-template-columns:repeat(\${Math.min(Math.max(roundKeys.length + (hunting ? 1 : 0), 1), 10)},1fr)">\${roundsHtml}</div></div><div><div class="coverage"><div class="row spread small"><span>靶内已读覆盖</span><span class="mono">\${covPct != null ? covPct + "%" : "未上报"} <span class="muted">/ \${esc(threshold)}%</span></span></div><div class="track"><div class="fill" style="width:\${covPct ?? 0}%"></div><i class="target" style="left:\${Math.min(Number(threshold) || 90, 100)}%"></i></div><p class="muted small">\${covPct != null && covPct < Number(threshold) ? "目标线未达到 · " : ""}覆盖不等于漏洞检出率</p></div>\${huntNote}</div></div></section>\`;
+  const huntPanel = \`<section class="panel \${hunting ? "active" : stagesObj.hunt === "failed" || stagesObj.hunt === "interrupted" ? "failed" : ""}"><div class="panelhead"><div class="row spread"><div class="row"><span class="index">0\${order.indexOf("hunt") + 1}</span><h2 class="mono">hunt</h2></div>\${badge(stageMeta("hunt").label, stageMeta("hunt").ui)}</div><p class="subtitle">串行执行 · 1 个会话 · 非运行池</p></div><div class="panelbody huntbody"><div><div class="metricrow"><div class="metric"><strong>\${hunting ? doneRounds + 1 : doneRounds || "—"}</strong><span>轮</span><p>\${hunting ? "当前轮次" : "已完成轮次"}</p></div><div class="metric"><strong>\${hypTotal}</strong><span>HYP</span><p>累计产出 · 不等于已证实</p></div></div><div class="row spread small"><span class="muted">逐轮新增 HYP</span><button class="link" data-action="rounds">产出详情 →</button></div><div class="rounds" style="grid-template-columns:repeat(\${Math.min(Math.max(roundKeys.length + (hunting ? 1 : 0), 1), 10)},1fr)">\${roundsHtml}</div></div><div><div class="coverage"><div class="row spread small"><span>靶内已读覆盖</span><span class="mono">\${covPct != null ? covPct + "%" : "未上报"} <span class="muted">/ \${esc(threshold)}%</span></span></div><div class="track"><div class="fill" style="width:\${covPct ?? 0}%"></div><i class="target" style="left:\${Math.min(Number(threshold) || 90, 100)}%"></i></div><p class="muted small">\${covPct != null && covPct < Number(threshold) ? "目标线未达到 · " : ""}覆盖不等于漏洞检出率</p></div>\${huntNote}</div></div></section>\`;
 
   // chains 面板
   let verifyBody;
