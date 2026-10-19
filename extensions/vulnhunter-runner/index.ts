@@ -17,6 +17,7 @@ import { readdirSync, writeFileSync, mkdirSync, existsSync, statSync, readFileSy
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { Workflow, WorkflowContext } from "./src/runtime.ts";
+import { convergeInterrupted } from "./src/runtime.ts";
 import { listFindings } from "./src/tools/finding.ts";
 import { effectiveModelSpec, MODEL_POOLS, parseModelSpec, readModelConfig, writeModelConfig, type ModelPool } from "./src/model-config.ts";
 import { createMonitorComponent } from "./src/monitor.ts";
@@ -146,15 +147,17 @@ export default function (pi: ExtensionAPI) {
         const w = workflows.get(name);
         if (!w) bad(`未知 workflow：${name}。可用：${[...workflows.keys()].join(", ")}${workflows.size === 0 && loadErrors.length ? `\n加载失败详情：\n${loadErrors.join("\n")}` : ""}`);
 
-        // resume：自动定位上次 failed 的阶段
+        // resume：自动定位上次 failed / interrupted（进程中断悬空，runtime 加载时已收敛）的阶段
         let runOpts: { runId?: string; from?: string } = {};
         if (args.op === "resume") {
           const runs = readRuns(workdir).filter((r) => r.workflow === name);
           const last = runs[runs.length - 1];
           if (!last) bad(`没找到 ${name} 的历史 run（workdir/system/runs/ 为空），无法续跑——请用 op=run 全新启动`);
-          const failed = Object.entries(last.stages).find(([, v]) => v === "failed")?.[0];
+          const failed = Object.entries(last.stages).find(([, v]) => v === "failed" || v === "interrupted")?.[0]
+            // run-state 尚未被 runStages 收敛（上次进程 kill 后首次 resume）：同规则预判，不落盘
+            ?? (convergeInterrupted(JSON.parse(JSON.stringify(last))), Object.entries(last.stages).find(([, v]) => v === "failed" || v === "interrupted")?.[0]);
           runOpts = { runId: last.runId, from: args.from ?? failed };
-          if (!runOpts.from) bad(`上次 run（runId=${last.runId}）没有 failed 阶段（阶段状态：${Object.entries(last.stages).map(([k, v]) => k + ":" + v).join(" ")}）。要重跑某阶段请显式给 from`);
+          if (!runOpts.from) bad(`上次 run（runId=${last.runId}）没有 failed / interrupted 阶段（阶段状态：${Object.entries(last.stages).map(([k, v]) => k + ":" + v).join(" ")}）。要重跑某阶段请显式给 from`);
         }
 
         state.status = "running"; state.workflow = name; state.runId = runOpts.runId; state.log = []; state.error = undefined;

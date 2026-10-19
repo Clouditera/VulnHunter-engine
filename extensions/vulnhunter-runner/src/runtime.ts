@@ -83,10 +83,13 @@ export interface StagedWorkflow {
 
 export function defineStagedWorkflow(w: StagedWorkflow): StagedWorkflow { return w; }
 
+/** 阶段状态：interrupted=进程中断时正在执行（in-flight 悬空，加载时收敛判定），语义区别于 failed（业务错误） */
+export type StageStatus = "pending" | "done" | "failed" | "skipped" | "interrupted";
+
 export interface RunState {
   workflow: string;
   runId: string;
-  stages: Record<string, "pending" | "done" | "failed" | "skipped">;
+  stages: Record<string, StageStatus>;
   /** 角色 → 会话文件路径（阶段间复活用） */
   sessions: Record<string, string>;
   /** workflow 自定义进度数据 */
@@ -110,6 +113,22 @@ export interface StageCtx extends WorkflowContext {
   }): Promise<import("./session.ts").SessionHandle>;
 }
 
+/**
+ * 收敛 in-flight 悬空状态（kill/断电后 pending 与 failed 之间的悬崖，读时修复优于写时预测）：
+ * pending 且曾进入执行（stageTimes.start 存在）→ interrupted；其余 pending 保留原语义（不发明拓扑推论）。
+ * interrupted 与 failed 同权进入 resume 自动定位（index.ts），重跑后 runOne 会覆盖为 done/failed。
+ * runStages 加载后调用并落盘；index.ts resume 定位前对历史 run 同规则预判（同一条规则，单源）。
+ * 返回是否有改动。
+ */
+export function convergeInterrupted(state: RunState): boolean {
+  const times = (state.data.stageTimes ?? {}) as Record<string, { start?: string }>;
+  let converged = false;
+  for (const [name, st] of Object.entries(state.stages)) {
+    if (st === "pending" && times[name]?.start) { state.stages[name] = "interrupted"; converged = true; }
+  }
+  return converged;
+}
+
 /** 跑阶段化 workflow；from=断点续跑，only=单步重试 */
 export async function runStages(wf: StagedWorkflow, ctx: WorkflowContext, opts: { runId?: string; from?: string; only?: string } = {}): Promise<void> {
   const runId = opts.runId ?? `${Date.now()}`;
@@ -124,6 +143,9 @@ export async function runStages(wf: StagedWorkflow, ctx: WorkflowContext, opts: 
     state = { workflow: wf.name, runId, stages: {}, sessions: {}, data: {} };
   }
   const save = () => writeFileSync(statePath, JSON.stringify(state, null, 2));
+
+  // 启动时收敛 in-flight 悬空状态（详见 convergeInterrupted）：读时修复，一次覆盖全部崩溃形态。
+  if (convergeInterrupted(state)) save();
 
   // 覆盖率统计目标参数落盘（09-11 fish；09-20 迁 system/）：coverage_include / coverage_exclude →
   // .vulnforge/system/coverage/coverage.yaml，枚举/记录/查询三层共读；参数缺省时不动已有文件（允许手工编辑），
