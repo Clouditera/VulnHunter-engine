@@ -153,6 +153,8 @@ const liteWorkflow = defineStagedWorkflow({
       try {
         // 整个多轮 hunt = hunt 池的一个长任务（锁 1，全程持 1 份模型许可）
         await huntPool.submit(async () => {
+        let curRound = 0;   // 在跑轮次：异常时落 roundInterrupted（观察台 failedround 样式的数据契约）
+        try {
         const fresh = ctx.params.hunt_mode === "fresh";
         const threshold = Number(ctx.params.hunt_coverage_threshold || "90");
         const zeroRounds = Number(ctx.params.hunt_zero_rounds || "3");   // 停轮连零轮数 x（fish 09-21 校准）
@@ -178,6 +180,7 @@ const liteWorkflow = defineStagedWorkflow({
         let zeroStreak = (d.huntZeroStreak as number | undefined) ?? 0;
         let lastBig = (d.huntLastBig as number | undefined) ?? 0;   // 大轮摘要已覆盖到第几轮
         for (let r0 = ((d.huntRound as number | undefined) ?? 0) + 1; r0 <= maxRounds; r0++) {
+          curRound = r0;
           const rn = `hunt${r0}`, mine = `h${r0}`;
           // 成分表：大轮检查点（若有）+ 其后各轮小摘要；fresh 模式没有轮间摘要
           const sigmaPrev = fresh ? [] : [...(lastBig ? [`Σhunt1-${lastBig}`] : []),
@@ -197,6 +200,10 @@ const liteWorkflow = defineStagedWorkflow({
           const news = hypIds(ctx.workdir).filter((id) => !before.has(id));
           ((d.roundHyps ??= {}) as Record<string, string[]>)[rn] = news;
           ((d.roundSigma ??= {}) as Record<string, string[]>)[rn] = sigmaPrev;
+          // 落盘顺序（非原子窗口收窄）：轮统计与 huntRound 先随 run-state 落盘（幂等、可重入），mark 后写。
+          // 中断若发生在两者之间，lineage 缺 huntN-done 但 huntRound 已推进——续跑从 huntRound+1 起，重做 mark/摘要均幂等，无损。
+          d.huntRound = r0; d.huntZeroStreak = news.length === 0 ? zeroStreak + 1 : 0; d.huntLastBig = lastBig;
+          s.save();
           s0.mark(`${rn}-done[init${sigmaPrev.length ? "," + sigmaPrev.join(",") : ""},${mine}][+${news.length}HYP]`);
           // 两档摘要（fish 09-11）：每轮结束小摘要压本轮；上下文占用>60% 时对历史全 hunt 大轮摘要；fresh 均不做
           if (!fresh) {
@@ -209,23 +216,31 @@ const liteWorkflow = defineStagedWorkflow({
                 guide: "这是多轮 hunt（风险假设挖掘）的历史。保留：各轮产出的全部 HYP 编号+一句话主张+关键锚点；各轮读过的代码区域。",
               });
               lastBig = r0;
+              d.huntLastBig = lastBig; s.save();   // 大轮摘要前进 lastBig，同步落盘
             }
           }
-          // 停轮判定（fish 09-21 校准）：覆盖率达阈值 且 连续 x 轮零新增
+          // 停轮判定（fish 09-21 校准）：覆盖率达阈值 且 连续 x 轮零新增（zeroStreak 已随上轮统计落盘）
+          zeroStreak = d.huntZeroStreak as number;
           const covPct = targetCov();
-          zeroStreak = news.length === 0 ? zeroStreak + 1 : 0;
           if (covPct !== null && covPct * 100 >= threshold && zeroStreak >= zeroRounds) {
             ctx.report(`覆盖达标（${(covPct * 100).toFixed(1)}% ≥ ${threshold}%）且连续 ${zeroRounds} 轮零新增，hunt 停轮`);
-            d.huntRound = r0; d.huntZeroStreak = zeroStreak; d.huntLastBig = lastBig; s.save();
             break;
           }
-          d.huntRound = r0; d.huntZeroStreak = zeroStreak; d.huntLastBig = lastBig; s.save();
           wakeups.push();   // 轮末唤醒：新 HYP 已落盘，消费侧立即开工
         }
         const sigmaEnd = fresh ? [] : [...(lastBig ? [`Σhunt1-${lastBig}`] : []),
           ...Array.from({ length: ((d.huntRound as number | undefined) ?? 0) - lastBig }, (_, i) => `Σhunt${lastBig + i + 1}`)];
         s0.mark(`hunt-end[init${sigmaEnd.length ? "," + sigmaEnd.join(",") : ""}][+${hypIds(ctx.workdir).length}HYP]`);
         await s0.execCommand("/coverage-record off");   // 关闭记录并落盘（09-20 解耦）
+        } catch (e) {
+          // 本轮异常：随 run-state 落 roundInterrupted（观察台据此给中断轮加 failedround 样式）
+          if (curRound > 0) {
+            ((s.state.data.roundInterrupted ??= {}) as Record<string, { at: string; reason: string }>)[`hunt${curRound}`] =
+              { at: new Date().toISOString(), reason: String(e).slice(0, 300) };
+            s.save();
+          }
+          throw e;
+        }
         }, { tag: "hunt" });
       } finally {
         s0.close();
@@ -246,7 +261,8 @@ const liteWorkflow = defineStagedWorkflow({
         !s.selected.includes("hunt")
         || !!(s.state.data as Record<string, unknown>).huntSettled
         || s.state.stages.hunt === "done"
-        || s.state.stages.hunt === "failed";
+        || s.state.stages.hunt === "failed"
+        || s.state.stages.hunt === "interrupted";   // 中断已收敛（runtime 加载时）：续跑前不误判上游未落定
       // 动态门槛可见性（fail-closed 收口）：沙箱状态未知时明确告警，不静默（09-17 ev 静默缺陷教训）
       if (ctx.params.sandbox_cfg && readSandboxState(ctx.workdir).status === "unknown") {
         ctx.report("⚠ 沙箱状态未知（unknown）——动态链将自行探测并回报 sandbox；请确认 build 阶段已执行 sandbox report");
