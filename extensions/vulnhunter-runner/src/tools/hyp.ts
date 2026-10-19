@@ -47,14 +47,33 @@ function norm(s: string): string {
   return s.toLowerCase().replace(/\\/g, "/").trim();
 }
 
-/** 从正文提取归一化靶点集合：file:line 锚点 + 函数名（标识符+括号） */
-function targets(body: string): Set<string> {
-  const out = new Set<string>();
+/** 结构化锚点：file:line 行号锚点（强靶点信号） */
+interface Anchor {
+  file: string;
+  line: number;
+}
+
+/** 强靶点行号邻近窗口：同文件行号差 ≤ 此值视为同一靶点（调参只改这里） */
+export const LINE_WINDOW = 15;
+
+/** 判重阈值：similarity ≥ 此值才进入判重分支（"同文件±15行 + 同漏洞类别"=1.0 命中；函数名撞车 0.4 不再被拒） */
+export const DUP_THRESHOLD = 0.8;
+
+/** 从正文提取结构化锚点 {file, line}[]（强靶点信号，与函数名分开不压平） */
+function anchors(body: string): Anchor[] {
+  const out: Anchor[] = [];
   const b = norm(body);
   for (const m of b.matchAll(/([\w./-]+\.(?:c|cc|cpp|cxx|h|hpp|rs|go|py|js|ts|java|php|rb))\s*:\s*(\d+)/g)) {
-    out.add(`file:${m[1]}:${m[2]}`);
+    out.push({ file: m[1], line: Number(m[2]) });
   }
-  for (const m of b.matchAll(/([a-z_]\w{1,60})\s*\(/g)) out.add(`fn:${m[1]}`);
+  return out;
+}
+
+/** 从正文提取函数名集合（弱靶点信号，只参与 similarity 打分，不单独构成同靶点） */
+function funcNames(body: string): Set<string> {
+  const out = new Set<string>();
+  const b = norm(body);
+  for (const m of b.matchAll(/([a-z_]\w{1,60})\s*\(/g)) out.add(m[1]);
   return out;
 }
 
@@ -89,11 +108,27 @@ function vulnClasses(body: string): Set<string> {
   return out;
 }
 
-/** 同靶点：归一化后的函数名 / file:line 有交集 */
-export function sameTarget(a: { body: string }, b: { body: string }): boolean {
-  const ta = targets(a.body), tb = targets(b.body);
-  for (const t of ta) if (tb.has(t)) return true;
+/** 弱靶点信号：函数名交集（不单独构成同靶点，仅参与打分） */
+function weakTarget(a: { body: string }, b: { body: string }): boolean {
+  const fa = funcNames(a.body), fb = funcNames(b.body);
+  for (const f of fa) if (fb.has(f)) return true;
   return false;
+}
+
+/** 强靶点信号：同文件且存在一对锚点行号差 ≤ LINE_WINDOW */
+function strongTarget(a: { body: string }, b: { body: string }): boolean {
+  const aa = anchors(a.body), bb = anchors(b.body);
+  for (const x of aa) {
+    for (const y of bb) {
+      if (x.file === y.file && Math.abs(x.line - y.line) <= LINE_WINDOW) return true;
+    }
+  }
+  return false;
+}
+
+/** 同靶点（对外语义 = 强靶点命中：同文件 ±LINE_WINDOW 行）；函数名撞车不再构成同靶点 */
+export function sameTarget(a: { body: string }, b: { body: string }): boolean {
+  return strongTarget(a, b);
 }
 
 /** 同漏洞模式：CWE 标签 / 模式词表类别有交集 */
@@ -104,20 +139,35 @@ export function sameVulnClass(a: { body: string }, b: { body: string }): boolean
 }
 
 /**
- * 相似度单点接口（0..1）：第一版 = 规则实现（同靶点+同类=1，同靶点或同类=0.5，否则 0）。
- * 后续换语义向量等实现时只改本函数，admit() 判定逻辑不动。
+ * 相似度单点接口（0..1）：
+ *   强靶点+同类=1.0；仅强靶点=0.7；仅弱靶点(函数名)+同类=0.4；仅同类=0.2；其他=0。
+ * admit() 以 DUP_THRESHOLD 消费本函数；后续换语义向量等实现时只改本函数。
  */
 export function similarity(a: { body: string }, b: { body: string }): number {
-  const t = sameTarget(a, b), c = sameVulnClass(a, b);
-  return t && c ? 1 : t || c ? 0.5 : 0;
+  const strong = strongTarget(a, b);
+  const same = sameVulnClass(a, b);
+  if (strong && same) return 1.0;
+  if (strong) return 0.7;
+  if (same && weakTarget(a, b)) return 0.4;
+  if (same) return 0.2;
+  return 0;
 }
 
-export type AdmitVerdict = "ADMIT" | "REJECT_DUP" | "REJECT_LOW_QUALITY";
+export type AdmitVerdict = "ADMIT" | "ADMIT_VARIANT" | "REJECT_DUP" | "REJECT_LOW_QUALITY";
 
-/** 入库前准入闸（HALL-64 §2.2）：同靶点+同类去重；low 且无差异点判低质 */
+/**
+ * 入库前准入闸（HALL-64 §2.2；HALL-72 粒度修复）：
+ *   1. similarity ≥ DUP_THRESHOLD（同文件±15行 + 同类）判重命中：
+ *      high 且 novelty_basis 有效 → ADMIT_VARIANT（误拒代价 ≫ 误纳代价，判重合并没有交给链裁决）；否则 REJECT_DUP。
+ *   2. 未命中判重：low 且 novelty_basis 缺失 → REJECT_LOW_QUALITY。
+ *   3. 否则 ADMIT。
+ */
 export function admit(newHyp: { body: string; confidence: string; novelty_basis?: string }, existing: Array<{ body: string }>): AdmitVerdict {
   for (const h of existing) {
-    if (sameTarget(h, newHyp) && sameVulnClass(h, newHyp)) return "REJECT_DUP";
+    if (similarity(h, newHyp) >= DUP_THRESHOLD) {
+      if (newHyp.confidence === "high" && !isNoveltyBasisEmpty(newHyp.novelty_basis)) return "ADMIT_VARIANT";
+      return "REJECT_DUP";
+    }
   }
   if (newHyp.confidence === "low" && isNoveltyBasisEmpty(newHyp.novelty_basis)) return "REJECT_LOW_QUALITY";
   return "ADMIT";
@@ -156,14 +206,15 @@ export function logRejected(workdir: string, tag: string, draft: HypDraft, reaso
   appendFileSync(join(workdir, "rejected_hyps.log"), JSON.stringify(rec) + "\n");
 }
 
-export function createHyp(workdir: string, tag: string, draft: HypDraft): HypRecord {
+export function createHyp(workdir: string, tag: string, draft: HypDraft, opts: { variant?: boolean } = {}): HypRecord {
   ensureDir(paths.hypDir(workdir));
   const n = nextSerial(hypFiles(workdir), new RegExp(`^HYP-${escapeRe(tag)}-H(\\d+)\\.json$`));
   const id = `HYP-${tag}-H${n}`;
   const now = new Date().toISOString();
   const rec: HypRecord = { id, tag, status: "pending", conclusion: "", verdict: "", createdAt: now, updatedAt: now, ...draft };
   atomicWriteJSON(paths.hyp(workdir, id), rec);
-  lineage(workdir, { action: "hyp.create", id, tag });
+  // ADMIT_VARIANT 入库留痕：与既有 HYP 同靶点判重交由链裁决（存储 schema 不动，仅 lineage 加字段）
+  lineage(workdir, { action: "hyp.create", id, tag, ...(opts.variant ? { variant: true } : {}) });
   return rec;
 }
 
@@ -190,7 +241,7 @@ export function makeHypTool(ws: WsContext, binding: ToolBinding): ToolDefinition
     label: "Hypothesis",
     description:
       "风险假设（HYP）管理。op：create（新建，编号自动；必填 novelty_basis 差异点说明 + confidence 自评 high/med/low；" +
-      "入库前过准入闸：同靶点+同漏洞模式判 REJECT_DUP，low 且无差异点判 REJECT_LOW_QUALITY，被拒仅留痕不入库）/ " +
+      "入库前过准入闸：同靶点（同文件±15行）+同漏洞模式判 REJECT_DUP，但 high 置信且有差异点降级为 ADMIT_VARIANT 变体入库（判重交由链裁决），low 且无差异点判 REJECT_LOW_QUALITY，被拒仅留痕不入库）/ " +
       "get（读全文+裁决）/ list（按 tag/status/conclusion 筛选）/ " +
       "update（研判回写：conclusion + verdict，写齐转办结）。正文由工具落盘，勿手改存储文件；引用其他 HYP 用工具返回的正式编号。",
     parameters: Type.Object({
@@ -222,19 +273,23 @@ export function makeHypTool(ws: WsContext, binding: ToolBinding): ToolDefinition
         }
         if (!binding.tag) return err(`create 需要会话绑定 tag（由 workflow 注入，如 hunt1）；本会话未绑定，无法编号。`);
         const draft: HypDraft = { body: params.body, noveltyBasis: String(params.novelty_basis).trim(), confidence: conf };
-        // 入库前准入闸（HALL-64 §2.2）：被拒留痕 .vulnforge/rejected_hyps.log，不进 chains、不计新增、不占编号
+        // 入库前准入闸（HALL-64 §2.2；HALL-72 粒度修复）：被拒留痕 .vulnforge/rejected_hyps.log，不进 chains、不计新增、不占编号
         const existing = hypFiles(ws.workdir).map((f) => readHyp(ws.workdir, f.replace(/\.json$/, ""))).filter((r): r is HypRecord => !!r);
         const verdict0 = admit({ body: draft.body, confidence: draft.confidence, novelty_basis: draft.noveltyBasis }, existing);
-        if (verdict0 !== "ADMIT") {
+        if (verdict0 === "REJECT_DUP" || verdict0 === "REJECT_LOW_QUALITY") {
           logRejected(ws.workdir, binding.tag, draft, verdict0);
           lineage(ws.workdir, { action: "hyp.reject", tag: binding.tag, reason: verdict0 });
           const why = verdict0 === "REJECT_DUP"
-            ? "与已有 HYP 同靶点 + 同漏洞模式（变体）"
+            ? "与已有 HYP 同靶点（同文件 ±15 行）+ 同漏洞模式（变体）"
             : "confidence=low 且 novelty_basis 缺失（低质假设）";
           return err(`准入闸拒绝（${verdict0}）：${why}。已留痕 rejected_hyps.log，未入库；请换一个真正新的假设再提。`);
         }
-        const rec = createHyp(ws.workdir, binding.tag, draft);
-        return ok(`已创建 ${rec.id}（system/hyp/${rec.id}.json，status=pending，confidence=${rec.confidence}）。引用本假设时用此正式编号。`);
+        // ADMIT_VARIANT：与既有 HYP 同靶点判重命中但 high 置信且有差异点，放行入库交由链裁决
+        const rec = createHyp(ws.workdir, binding.tag, draft, { variant: verdict0 === "ADMIT_VARIANT" });
+        const suffix = verdict0 === "ADMIT_VARIANT"
+          ? "。注：以变体入库（ADMIT_VARIANT），与既有 HYP 同靶点判重交由链裁决"
+          : "";
+        return ok(`已创建 ${rec.id}（system/hyp/${rec.id}.json，status=pending，confidence=${rec.confidence}）${suffix}。引用本假设时用此正式编号。`);
       }
 
       if (op === "get") {

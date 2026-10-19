@@ -35,14 +35,15 @@ await t("hyp：create 需要 novelty_basis + confidence；缺项/非法值打回
 });
 
 // ---------------------------------------------------------------- 规则判定
-await t("sameTarget：归一化函数名 / file:line 相同为同靶点", async () => {
+await t("sameTarget：强靶点 = 同文件 ±LINE_WINDOW 行；函数名/单行差不再是同靶点（HALL-72）", async () => {
   const a = { body: "锚点 src/Auth.C:42 login()" };
   const b = { body: "位置：src/auth.c:42" };
   const c = { body: "锚点 src/other.c:9 logout()" };
-  assert(sameTarget(a, b), "大小写归一化后同文件同函数应同靶点");
-  assert(!sameTarget(a, c), "不同文件不同函数应不同靶点");
+  assert(sameTarget(a, b), "大小写归一化后同文件同锚点应同靶点");
+  assert(!sameTarget(a, c), "不同文件不同锚点应不同靶点");
   assert(sameTarget({ body: "x src/a.c:7" }, { body: "y src/a.c:7" }), "同 file:line 应同靶点");
-  assert(!sameTarget({ body: "x src/a.c:7" }, { body: "y src/a.c:8" }), "不同行应不同靶点");
+  assert(!sameTarget({ body: "x src/a.c:7" }, { body: "y src/a.c:80" }), "同文件行号差 >15 应不同靶点");
+  assert(sameTarget({ body: "x src/a.c:7" }, { body: "y src/a.c:22" }), "同文件行号差恰 15 应同靶点");
 });
 await t("sameVulnClass：CWE 标签 / 模式词表匹配", async () => {
   assert(sameVulnClass({ body: "CWE-89 sql injection" }, { body: "风险 cwe-89" }), "同 CWE 应同类");
@@ -58,7 +59,9 @@ await t("similarity：单点接口可调（默认规则实现）", async () => {
 // ---------------------------------------------------------------- 准入闸
 await t("admit：同靶点+同类判 REJECT_DUP；low 且无 novelty_basis 判 REJECT_LOW_QUALITY", async () => {
   const h1 = { id: "HYP-hunt1-H1", body: "锚点 src/a.c:1 f()\nCWE-89", confidence: "med", novelty_basis: "首个 a.c 假设" };
-  assert(admit({ body: "src/a.c:1 f() sql 注入", confidence: "high", novelty_basis: "x" }, [h1]) === "REJECT_DUP");
+  assert(admit({ body: "src/a.c:1 f() sql 注入", confidence: "med", novelty_basis: "x" }, [h1]) === "REJECT_DUP");
+  // HALL-72：判重命中 + high 且有差异点 → ADMIT_VARIANT（变体入库，判重交链裁决）
+  assert(admit({ body: "src/a.c:1 f() sql 注入", confidence: "high", novelty_basis: "另一入口独立触发" }, [h1]) === "ADMIT_VARIANT");
   assert(admit({ body: "src/b.c:2 g() CWE-89", confidence: "high", novelty_basis: "x" }, [h1]) === "ADMIT", "不同靶点应放行");
   assert(admit({ body: "src/c.c:3 h() CWE-79", confidence: "high", novelty_basis: "x" }, [h1]) === "ADMIT", "不同类应放行");
   assert(admit({ body: "src/c.c:3 h() CWE-79", confidence: "low", novelty_basis: "" }, [h1]) === "REJECT_LOW_QUALITY");
