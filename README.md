@@ -1,79 +1,83 @@
-# VulnForge-chat — 会话化安全审计流程
+# VulnHunter Engine
 
-VulnForge 审计流程的会话化形态：**一个 pi 会话即整个编排器**。主会话（decide）持有任务意图，通过 subagent 派发各阶段任务；pi-context 管理长跑上下文；工作区文件系统是三池共享记忆。无自研编排二进制。
+审计 workflow 的独立执行内核，同时提供 pi 扩展入口与平台编程入口。平台身份、授权、Task 产品数据与部署不在此仓。
 
-## 架构
+## 开发说明（必读）
 
-```
-pi（main-prompt 扩展自动注入主提示词）← 主会话（decide，持久）
-  ├─ pi-context       上下文纪律：根锚点/轮锚点/checkout 新鲜分支
-  ├─ workspace-diff   轮次增量；code-coverage-viewer 覆盖读数
-  └─ subagent(...)    阶段执行（天然会话隔离）
-       ├─ onboard / research / cognize / hunt / verify   （默认模型）
-       ├─ poc-verify / ev-assess / exp-build             （强模型，agentOverrides）
-       └─ report                                        （隔离审计）
-```
+动手写代码或评审之前，阅读并**遵循**以下文档；与之冲突的实现不予合并。注意 `extensions/vulnhunter-runner/AGENTS.md` 是审计节点的基底提示词，不是开发说明。
+
+文档：
+
+- [docs/engine-design.md](docs/engine-design.md)：现行引擎设计（结构、阶段、会话、执行器、产物）。
+- [docs/workflow-authoring.md](docs/workflow-authoring.md)：编写新 workflow。
+- [docs/model-control.md](docs/model-control.md)：模型控制面。
+- [docs/archive/](docs/archive/)：历史设计，只读，不能作为实现依据。
+- 平台整体架构原则：Community 仓 `docs/architecture.md` 与其 README 的开发说明。
+
+规则：
+
+1. **引擎独立于平台**：不引用平台代码、不访问平台数据库、不处理平台身份与授权；平台需要的能力通过编程入口和机器可读声明提供。
+2. **workflow 显式登记**在 `src/workflows/registry.ts`；workflow 只编排，不实现机制（见 workflow-authoring.md）。
+3. **结构化产物只经对象工具落盘**；产物只增不删。
+4. **模型消费一律经执行器容量门**，许可在成功、失败、中止时都释放。
+5. **Pi SDK 是唯一 agent 框架**，不做 adapter。
+6. 单个源码文件不超过 500 行；不留没有上下文的 `TODO`；密钥不进代码和日志。
+7. 改动后在仓根跑 `pnpm typecheck`，runner 测试在 `extensions/vulnhunter-runner` 下跑 `pnpm test`。
+8. 平台以 submodule 固定本仓版本，升级顺序 Engine → Community → Enterprise。
 
 ## 安装
 
-```bash
-git clone --recurse-submodules https://github.com/Clouditera/VulnForge-Chat.git
-cd VulnForge-Chat
+Node 22.22+，pnpm 11.18.0。递归初始化子模块后，在仓根执行：
 
-# 1. 模型端点：cp models.json.example models.json，填入你的 provider 与 key（key 用 $VAR 引用时同步配置 .env）
-# 2. 扩展依赖（有外部依赖的三个）
-npm install --prefix extensions/pi-subagents --omit=dev
-npm install --prefix extensions/pi-web-access --omit=dev
-npm install --prefix extensions/output-contract --omit=dev
-# 3. 指认 agent dir（建议写进 shell rc）
-export PI_CODING_AGENT_DIR=$PWD
+```sh
+pnpm install --frozen-lockfile
+pnpm typecheck
+pnpm build
 ```
 
-## 使用
+仓根 workspace 统一安装 runner 和节点的 pi-web-access 依赖；不再依赖全局 pi、工作站 node_modules 软链接或分目录 npm install。
 
-**仓库根即 agent dir**；启动走仓库自带的 `vf` 启动器（它会自动 export `PI_CODING_AGENT_DIR`）。
+## 编程入口
 
-主会话（decide）系统提示词 = `AGENTS.md`（全局身份）+ `main-prompt.md`（decide 任务）；扩展按需显式挂载（tracker 不挂主会话，decide 阅读不计 coverage）；子会话提示词 = AGENTS.md + 任务书正文（pi-subagents fork 自动前置拼接）。
+```ts
+import { createRunner } from '@vulnhunter/engine-runner';
 
-### 启动（交互 TUI，可同时测试多个项目）
-
-```bash
-# 审计专用入口（建议写进 shell rc）：--no-skills 屏蔽 ~/.agents/skills 等外部技能源，
-# 保证审计会话的工具面干净；日常 pi 使用不受影响
-alias pia='/path/to/VulnForge-Chat/vf --no-skills'
-
-cd /path/to/项目A && pia     # 每个项目一个 TUI 会话，互不干扰
-cd /path/to/项目B && pia     # 会话按 cwd 自动隔离（sessions/<目录编码>/）
+const runner = createRunner({ engineDir: '/path/to/engine' });
+const run = await runner.start({
+  workflow: 'audit-lite',
+  target: '/path/to/project',
+  params: { rounds: '1' },
+  // agents: 每个 agent 的模型与凭证配置；见 docs/model-control.md
+});
+const result = await runner.wait(run.runId);
 ```
 
-> 改提示词/agents/扩展后重启会话（pi -c）即生效。
+包入口只暴露 Runner API，不注册聊天工具、不启动控制端口。引擎目前仍用文件 checkpoint 和进程内运行登记；这不是平台持久化 Task 服务，不能将它等同于用户侧任务数据库。
 
-第一句话给出意图：`开始审计。audit_scope: …；vuln_focus: …`（目标即当前目录；参数英文名 + 中文备注见 main-prompt）
-产物位置：**工作区根默认 `<项目>/.vulnforge`**（todo/ findings/ knowledge/ report/ 等全部在其下，项目根零污染；意图中可用 `output_dir: <路径>` 另指）。
-恢复中断：同目录 `pi -c`（继续上次）/ `pi -r`（会话选择器）；开新会话：直接 `pi`。
+`close()` 等待已开始工作结束，不是取消。工作流续跑能力仍由阶段执行接口提供；平台级统一取消/恢复契约属于任务执行改造，不在包入口整理中假装已完成。
 
-### 查看会话文件
+## 独立 pi 使用
 
-会话文件仍在 agent dir 下：
-```
-<repo>/sessions/<项目目录编码>/
-├── <时间戳>_<主会话uuid>.jsonl        ← 主会话全量转录（消息/思考/工具/token）
-└── <时间戳>_<主会话uuid>/<runId>/run-N/session.jsonl   ← 各 subagent 会话
-```
+配置 `models.json`/`settings.json`（见 example），凭证保留在本地，随后从目标代码目录调用仓库的 `vf`。它执行仓内安装的 pi，并通过此仓 agentDir 装载扩展。
 
-- 测试**进行中**：`tail -f` 主会话 jsonl 观察调度；`cat <repo>/run-history.jsonl` 看 subagent 运行登记（agent/状态/耗时）；
-- 测试**结束后**：同目录 `pi -r` 在 TUI 里回看任意会话（含分支树）；或直接读 jsonl（每行一个 JSON 事件，jq 可任意切片，如 `jq -r 'select(.type=="message") | .message.role' file.jsonl`）；
-- 快速定位某项目的会话目录：`ls -lt <repo>/sessions/ | grep 项目名`。
+- `extensions/vulnhunter-runner/index.ts`：pi 工具与 TUI 入口。
+- `extensions/vulnhunter-runner/src/api.ts`：平台编程入口。
+- `src/workflows/registry.ts`：唯一的已安装 workflow 清单；不扫描目录猜测可执行工作流。
+- `src/runtime.ts` / `session.ts` / `executor/`：阶段、会话与调度。
+- `tasks/`、`skills/`、`node-ext/`：执行所需资源；平台镜像必须连同源码/编译产物一起包含，不能只复制 API 文件。
 
-## 目录
+## 包与嵌入方式
 
-- `AGENTS.md` — **共享根提示词**（身份/授权/沙箱/工作区/方法总则）：pi 自动附加到所有会话（含子进程）
-- `main-prompt.md` — decide 专属提示（调度规则 + 上下文纪律），main-prompt 扩展注入时自动拼接 AGENTS.md
-- `settings.json` — pi 全局默认（默认模型与思考档、subagents 双代号）；`models.json.example` / `.env.example` — 端点与 key 模板
-- `agents/` — 9 个节点的**差异提示**（节点任务规则；共享部分一律上收 AGENTS.md，不在节点文件重复）；frontmatter `skills:` 绑定各节点技能（对齐 youngflow flow.audit.yaml）
-- `skills/` — 节点绑定技能（bug-report/wiki-maintainer/project-profiler/cognition-building/hypothesis-writer/threat-modeling/report-generator）；decide 的绑定由 main-prompt 扩展注册
-- `extensions/` — main-prompt（主提示词注入）+ session-archive（会话树归档）+ workspace-diff + code-coverage-viewer + pi-context/pi-subagents（submodule）
+包名：`@vulnhunter/engine-runner`（private，不发 npm）。Community/Enterprise 用 submodule 固定本仓提交，并在自己的 pnpm workspace 中包含 runner 和节点扩展目录；以 `workspace:*` 建依赖，不穿透相对路径引用 `src/`。
 
-## 依赖
+当前 exports：默认 Runner/模型会话 API、`/workflow` 阶段编排 API、`/extension` pi 工具入口、`/model-provider` 原生内存 provider 适配及 `/package.json`。平台显式装配扩展；此处不改变现有任务启动、阶段调度和 Task/Run 归属。
 
-- pi CLI（≥ 0.87.0）；其余随仓库自带（pi-context/pi-subagents 为 submodule，自有扩展零依赖）
+独立 TUI 的 HTTP 观察界面与会话 HTML 渲染分别放在 `web.ts`、`monitor-page.ts`、`monitor-session.ts`，不混在执行 API 中。API 本身不要求启动任何观察服务。
+
+## 平台模型配置
+
+平台使用 `AgentModelRuntime` 的 `inline` 快照：provider 实例 ID、providerType、多个模型定义、内存凭证及精确选择。记录 ID 只在平台选择/授权中使用；Pi 的 Provider.id、Model.provider 和认证索引使用 providerType（如 zai）。每个 agent 的独立内存 runtime 只注册它所选记录，同类型多账号不在同一 Pi registry 中混放。原生 Pi provider 直接消费 key/headers 字符串，不经过 `models.json` 的表达式解释器。
+
+装配 `/extension` 时显式提供 `getModelSnapshot`，使 init/hunt/verify 从同一个已提交父快照建立独立 SDK runtime。后续主对话配置不会无意改动已开始任务；任务模型变更走自己的 registry。`.vulnforge/system/model.json` 只记录任务的模型选择引用，绝不是 provider/凭证来源。独立 CLI 的本地配置入口仍与平台隔离。
+
+子会话的设置保留 Pi 的 global/project 合并规则，但 SDK 更新默认选择时只写内存。分支摘要使用所属会话的 SDK runtime、模型和思考档，保留原来的闭区间、挂载位置、摘要结构和 32768 输出预算，不再读 key 文件或强制开启思考。所有明确的模型/思考选择均检查 SDK 实际值，不允许静默代选或降档。

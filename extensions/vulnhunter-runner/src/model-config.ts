@@ -9,8 +9,9 @@
 import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import { AGENT_THINKING_LEVELS, type AgentThinkingLevel } from "./agent-model.ts";
 
-export interface ModelSpec { provider: string; id: string; thinking?: string }
+export interface ModelSpec { provider: string; id: string; thinking?: AgentThinkingLevel }
 export type ModelPool = "global" | "init" | "hunt" | "verify";
 export type ModelConfig = Partial<Record<ModelPool, string>>;
 
@@ -19,7 +20,9 @@ export const MODEL_POOLS: ModelPool[] = ["global", "init", "hunt", "verify"];
 export function parseModelSpec(spec: string): ModelSpec {
   const m = spec.trim().match(/^([^/:]+)\/([^:]+)(?::([A-Za-z]+))?$/);
   if (!m) throw new Error(`模型配置格式错误："${spec}"（应为 provider/model[:thinking]）`);
-  return { provider: m[1], id: m[2], thinking: m[3] };
+  const thinking = AGENT_THINKING_LEVELS.find((level) => level === m[3]);
+  if (m[3] !== undefined && thinking === undefined) throw new Error(`不支持的 thinking level：${m[3]}`);
+  return { provider: m[1], id: m[2], thinking };
 }
 
 const cfgPath = (workdir: string) => join(workdir, "system", "model.json");
@@ -79,12 +82,12 @@ export function getModelRuntime(engineDir: string): Promise<ModelRuntime> {
 }
 
 /** 解析 spec → Model 对象；未知 provider/模型 → 抛错（fail fast，不静默回退） */
-export async function resolveModel(engineDir: string, spec: string): Promise<{ model: NonNullable<ReturnType<ModelRuntime["getModel"]>>; parsed: ModelSpec }> {
+export async function resolveModel(engineDir: string, spec: string): Promise<{ model: NonNullable<ReturnType<ModelRuntime["getModel"]>>; parsed: ModelSpec; runtime: ModelRuntime }> {
   const parsed = parseModelSpec(spec);
   const rt = await getModelRuntime(engineDir);
   const model = rt.getModel(parsed.provider, parsed.id);
   if (!model) throw new Error(`模型解析失败：未知模型 ${parsed.provider}/${parsed.id}（检查引擎 models.json 与拼写）`);
-  return { model, parsed };
+  return { model, parsed, runtime: rt };
 }
 
 // ---------------------------------------------------------------------------

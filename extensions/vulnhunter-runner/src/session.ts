@@ -1,3 +1,5 @@
+import { nodeRoot, findTaskStart } from "./session-helpers.ts";
+export { nodeRoot, loadTaskBook, buildPrompt } from "./session-helpers.ts";
 /**
  * SessionService：pi 会话树的程序化封装（灵活性框架核心）。
  *
@@ -12,10 +14,10 @@
  */
 
 import {
-  createAgentSession, DefaultResourceLoader, SettingsManager, SessionManager, parseFrontmatter,
+  createAgentSession, DefaultResourceLoader, SessionManager,
   type AgentSession, type AgentSessionEvent, type CreateAgentSessionOptions, type ModelRuntime, type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { NODES, type NodeSpec } from "./nodes.ts";
 import { lineage, OpsCounter, tasksCovering, loadLedgerRows } from "./ledger.ts";
@@ -27,7 +29,10 @@ import { makeHypTool } from "./tools/hyp.ts";
 import { makeFindingTool } from "./tools/finding.ts";
 import { monitorState } from "./monitor-state.ts";
 import { parseModelSpec, resolveModel } from "./model-config.ts";
-import type { AgentModelRegistry } from "./agent-model.ts";
+import { assertModelSelection, type AgentModelRegistry } from "./agent-model.ts";
+import { sessionSettings } from "./session-settings.ts";
+import { sessionModelOptions } from "./session-model.ts";
+import { envToolDefinitions, type RunEnv } from "./exec-env.ts";
 
 /** 会话上下文（与 WorkflowContext 同形，避免循环依赖） */
 export interface SessionCtx {
@@ -39,7 +44,16 @@ export interface SessionCtx {
   runId?: string;
   /** 可选：按 agentKey 管理的内存模型 runtime（SaaS/纯引擎控制面） */
   modelRegistry?: AgentModelRegistry;
+  /** 可选：执行环境。给了则 read/write/edit/bash 作用在该环境（工作区目录除外），见 exec-env.ts */
+  env?: RunEnv;
+  /** Pi 会话文件目录。缺省 `<workdir>/system/sessions`——引擎的一切状态都在工作区里，
+   *  沙箱销毁重建后仍可续跑；显式给 sessionManager 的调用方（测试、嵌入式）不参与。 */
+  sessionsDir?: string;
+  /** 模型调用失败后各次重试前的等待（毫秒），用尽即放弃（aborted）；缺省 10 秒、30 秒。 */
+  retryDelaysMs?: number[];
 }
+
+const RETRY_DELAYS_MS = [10_000, 30_000];
 
 export interface SessionHandle {
   readonly id: string;
@@ -82,89 +96,6 @@ export interface SessionHandle {
   close(): void;
 }
 
-/** 读 tasks/<name>.md 正文（兼容残留 frontmatter，剥掉） */
-/** 节点资源根（自包含扩展目录：tasks/ skills/ AGENTS.md node-ext/ 都在这下面，fish 09-11 收纳） */
-export function nodeRoot(engineDir: string): string { return join(engineDir, "extensions", "vulnhunter-runner"); }
-
-export function loadTaskBook(engineDir: string, name: string): string {
-  const raw = readFileSync(join(nodeRoot(engineDir), "tasks", `${name}.md`), "utf-8");
-  return parseFrontmatter<Record<string, unknown>>(raw).body.trim();
-}
-
-/** 定稿 user prompt 组装：参数头部 + 任务书 + 任务说明句（fish 09-02 裁定） */
-export function buildPrompt(ctx: SessionCtx, agentName: string, task: string, extra?: string): string {
-  const head = [
-    `工作区根目录：${ctx.workdir}（任务里的产物相对路径——knowledge/ findings/ system/ 等——都以它为基准）`,
-    `引擎扩展根目录：${nodeRoot(ctx.engineDir)}（任务书提到的 skills/ 等引擎侧相对路径以它为基准，不是目标项目目录）`,
-    ctx.params.sandbox_cfg ? `沙箱连接配置：${ctx.params.sandbox_cfg}` : "",
-    ctx.params.vuln_focus ? `漏洞关注方向：${ctx.params.vuln_focus}` : "",
-    ctx.params.output_lang ? `输出语言：${ctx.params.output_lang}` : "输出语言：zh-CN",
-  ].filter(Boolean);
-  return [
-    head.length ? "当前审计任务情况说明：\n" + head.join("\n") : "",
-    loadTaskBook(ctx.engineDir, agentName),
-    `接下来开始执行 ${task}${extra ? "\n" + extra : ""}`,
-  ].filter(Boolean).join("\n\n");
-}
-
-/** 从 end 沿 parentId 上溯到 preLeaf，取链上最早的用户消息条目 = 任务起点（重试轮取首个 prompt） */
-function findTaskStart(sm: SessionManager, preLeaf: string | null, endEntry?: string): string | undefined {
-  const byId = new Map(sm.getEntries().map((e) => [e.id, e]));
-  let cur: string | null = endEntry ?? null;
-  let found: string | undefined;
-  let guard = 0;
-  while (cur && cur !== preLeaf && guard++ < 200000) {
-    const e = byId.get(cur);
-    if (!e) break;
-    const m = e as unknown as { type?: string; message?: { role?: string } };
-    if (m.type === "message" && m.message?.role === "user") found = e.id;   // 持续覆写 → 最后留下最早的一条
-    cur = (e.parentId as string | null) ?? null;
-  }
-  return found;
-}
-/**
- * 从会话文件的标记处分叉出独立会话（forkFromLabel）。
- * 每次调用都从磁盘重读当前文件——并行模式下 hunt 仍在追加会话，旧 handle 的内存状态看不到新标记（fish 09-21）。
- * 分支点语义与 handle.fork 一致：定位标记 → 叶子上溯跳过 label → createBranchedSession → 显式落盘。
- */
-export async function forkFromLabel(
-  ctx: SessionCtx,
-  sessionFile: string,
-  label: string,
-  newId: string,
-  o?: { agent?: string; binding?: ToolBinding; modelSpec?: string; modelAgentKey?: string },
-): Promise<SessionHandle> {
-  const sm = SessionManager.open(sessionFile);
-  const entries = sm.getEntries();
-  const entry = entries.find((e) => sm.getLabel(e.id) === label)
-    ?? entries.find((e) => (sm.getLabel(e.id) ?? "").startsWith(label));   // 前缀匹配（成分表标记）
-  if (!entry) throw new Error(`fork 失败：会话树上没有标记 "${label}"`);
-  const byId = new Map(entries.map((e) => [e.id, e as unknown as { id: string; type?: string; parentId?: string | null }]));
-  let forkLeaf: string = entry.id;
-  let g = 0;
-  while (g++ < 1000) {
-    const e = byId.get(forkLeaf);
-    if (!e || e.type !== "label") break;
-    forkLeaf = e.parentId ?? "";
-  }
-  if (!forkLeaf) throw new Error("fork 失败：叶子上溯未找到内容条目");
-  const path = sm.createBranchedSession(forkLeaf);
-  if (!path) throw new Error("fork 失败：createBranchedSession 未返回路径");
-  if (!existsSync(path)) (sm as unknown as { _rewriteFile?: () => void })._rewriteFile?.();
-  if (!existsSync(path)) throw new Error("fork 失败：分支文件未生成");
-  lineage(ctx.workdir, ctx.runId
-    ? { run: ctx.runId, id: newId, action: "fork", label, file: path }
-    : { id: newId, action: "fork", label, file: path });
-  return startSession(ctx, {
-    agent: o?.agent ?? "hyp-chain",
-    id: newId,
-    binding: o?.binding,
-    sessionFile: path,
-    modelSpec: o?.modelSpec,
-    modelAgentKey: o?.modelAgentKey,
-  });
-}
-
 async function createSession(
   ctx: SessionCtx,
   agentName: string,
@@ -172,17 +103,18 @@ async function createSession(
   sessionManager?: SessionManager,
   modelSpec?: string,
   modelRuntime?: ModelRuntime,
-  resolvedModel?: unknown,
+  resolvedModel?: CreateAgentSessionOptions["model"],
   modelThinking?: string,
 ): Promise<{ sess: AgentSession; spec: NodeSpec; customTools: ToolDefinition[] }> {
   const spec: NodeSpec | undefined = NODES[agentName];
   if (!spec) throw new Error(`未知节点: ${agentName}（nodes.ts 未定义）`);
 
   const agentsBase = readFileSync(join(nodeRoot(ctx.engineDir), "AGENTS.md"), "utf-8");
+  const settingsManager = sessionSettings(ctx.cwd, ctx.engineDir);
   const resourceLoader = new DefaultResourceLoader({
     cwd: ctx.cwd,
     agentDir: ctx.engineDir,
-    settingsManager: SettingsManager.create(ctx.cwd, ctx.engineDir),
+    settingsManager,
     appendSystemPrompt: [agentsBase],
     noExtensions: true,
     additionalExtensionPaths: (spec.extensions ?? []).map((n) => join(nodeRoot(ctx.engineDir), "node-ext", n)),
@@ -201,29 +133,34 @@ async function createSession(
     hyp: () => makeHypTool(ws, binding),
     finding: () => makeFindingTool(ws, binding),
   };
-  const customTools = stageTools(agentName)
-    .map((name) => factories[name]?.())
-    .filter((t): t is ToolDefinition => !!t);
+  const customTools = [
+    ...stageTools(agentName).map((name) => factories[name]?.()).filter((t): t is ToolDefinition => !!t),
+    ...(ctx.env ? envToolDefinitions(ctx.cwd, ctx.env) : []),
+  ];
 
-  // 按池模型（fish 09-21）：spec 指定了就显式注入——优先于 settings 默认与会话文件里的旧模型
-  let modelOpts: Pick<CreateAgentSessionOptions, "model" | "thinkingLevel"> = {};
-  if (resolvedModel) {
-    modelOpts = { model: resolvedModel as CreateAgentSessionOptions["model"], ...(modelThinking ? { thinkingLevel: modelThinking as CreateAgentSessionOptions["thinkingLevel"] } : {}) };
-  } else if (modelSpec) {
-    const { model, parsed } = await resolveModel(ctx.engineDir, modelSpec);
-    modelOpts = { model, ...(parsed.thinking ? { thinkingLevel: parsed.thinking as CreateAgentSessionOptions["thinkingLevel"] } : {}) };
-  }
+  const model = await sessionModelOptions(ctx.engineDir, settingsManager, { modelSpec, modelRuntime, model: resolvedModel, thinking: modelThinking });
   const { session } = await createAgentSession({
     cwd: ctx.cwd,
     agentDir: ctx.engineDir,
     resourceLoader,
-    ...modelOpts,
-    ...(modelRuntime ? { modelRuntime } : {}),
+    settingsManager,
+    ...model.options,
     ...(sessionManager ? { sessionManager } : {}),
     ...(spec.tools ? { tools: [...spec.tools, ...customTools.map((t) => t.name)] } : {}),
     customTools,
   });
+  if (model.expected) {
+    try { assertModelSelection(session, model.expected); }
+    catch (error) { session.dispose(); throw error; }
+  }
   return { sess: session, spec, customTools };
+}
+
+/** Sessions live in the workspace (`<workdir>/system/sessions`) so a task can always resume. */
+export function defaultSessionManager(ctx: { cwd: string; workdir: string; sessionsDir?: string }): SessionManager {
+  const dir = ctx.sessionsDir ?? join(ctx.workdir, "system", "sessions");
+  mkdirSync(dir, { recursive: true });
+  return SessionManager.continueRecent(ctx.cwd, dir);
 }
 
 export { SUMMARY_SHAPE } from "./branch-summary.ts";
@@ -241,13 +178,15 @@ export async function startSession(ctx: SessionCtx, opts: {
   modelSpec?: string;
   /** inline agent model runtime；与 modelAgentKey 二选一。 */
   modelRuntime?: ModelRuntime;
-  resolvedModel?: unknown;
+  resolvedModel?: CreateAgentSessionOptions["model"];
   modelThinking?: string;
   /** 从 ctx.modelRegistry 取该 agent 的稳定 runtime + 当前 Model。 */
   modelAgentKey?: string;
 }): Promise<SessionHandle> {
   const id = opts.id ?? `${opts.agent}-${Date.now()}`;
-  const sm = opts.sessionManager ?? (opts.sessionFile ? SessionManager.open(opts.sessionFile) : undefined);
+  const sm = opts.sessionManager ?? (opts.sessionFile
+    ? SessionManager.open(opts.sessionFile)
+    : defaultSessionManager(ctx));
   const bindingRef: ToolBinding = opts.binding ?? {};
   let modelRuntime = opts.modelRuntime;
   let resolvedModel = opts.resolvedModel;
@@ -266,44 +205,18 @@ export async function startSession(ctx: SessionCtx, opts: {
   let sessFile: string | undefined;
   try { sessFile = (sess as any).sessionManager?.getSessionFile?.(); if (sessFile) monitorState.nodeSession(id, sessFile); } catch { /* 无碍 */ }
 
-  // 模型回退守卫（09-15 sec 实报：KIMI_API_KEY 传空 → pi 静默换默认模型继续跑，盲测险情）。
-  // 期望来源＝当前生效配置：按池指定了模型就用指定值，否则 settings.json 默认；不一致默认硬失败。
-  let expectedModel: string | null = null;
-  try {
-    const sj = JSON.parse(readFileSync(join(ctx.engineDir, "settings.json"), "utf-8")) as { defaultProvider?: string; defaultModel?: string };
-    if (sj.defaultProvider && sj.defaultModel) expectedModel = `${sj.defaultProvider}/${sj.defaultModel}`;
-  } catch { /* 无 settings.json 或读不出 → 不设期望，跳过守卫 */ }
-  if (opts.modelSpec) {
-    const p = parseModelSpec(opts.modelSpec);
-    expectedModel = `${p.provider}/${p.id}`;
-  }
-  if (resolvedModel) {
-    const m = resolvedModel as { provider?: string; id?: string };
-    if (m.provider && m.id) expectedModel = `${m.provider}/${m.id}`;
-  }
-  if (expectedModel) {
-    const em = (sess as unknown as { model?: { provider?: string; id?: string } }).model;
-    const got = em?.provider && em?.id ? `${em.provider}/${em.id}` : "（无）";
-    if (got !== expectedModel) {
-      const via = opts.modelSpec ? "指定配置" : "settings.json 配置";
-      const msg = `模型回退检测：${via} ${expectedModel}，实际生效 ${got}——疑似 provider 认证缺失被 pi 静默替换。`;
-      if (process.env.VULNHUNTER_ALLOW_MODEL_FALLBACK === "1") {
-        monitorState.log(`警告：${msg}（已放行）`);
-        console.error(`[vulnhunter] ${msg}`);
-      } else {
-        monitorState.nodeEnd(id);
-        try { (sess as any).dispose?.(); } catch { /* 无碍 */ }
-        throw new Error(`${msg} run 已中止；确认 API key 后重试，或设 VULNHUNTER_ALLOW_MODEL_FALLBACK=1 放行。`);
-      }
-    }
-  }
   // 台账/血缘统一带 run 标识（fish 09-15）
   const ln = (rec: Record<string, unknown>) => lineage(ctx.workdir, ctx.runId ? { run: ctx.runId, ...rec } : rec);
 
   // 操作计数（task 区间聚合：全节点通用，fish 09-15）——pi 的 end 事件不带 args，start 暂存参数
   const ops = new OpsCounter();
+  // 模型调用失败（限流、服务端错误、重试用尽）时 pi 不抛异常，只在助手消息上记 stopReason=error；
+  // 不看它，任务会被当成「正常结束」，研判就成了「未产出 finding = 驳回」。
+  const last: { assistant?: { stopReason?: string; errorMessage?: string } } = {};
+  const modelError = (): string | undefined => (last.assistant?.stopReason === "error" ? (last.assistant.errorMessage ?? "未知错误") : undefined);
   sess.subscribe((ev: AgentSessionEvent) => {
-    const e = ev as unknown as { type?: string; toolCallId?: string; toolName?: string; args?: unknown; result?: unknown; isError?: boolean };
+    const e = ev as unknown as { type?: string; toolCallId?: string; toolName?: string; args?: unknown; result?: unknown; isError?: boolean; message?: { role?: string; stopReason?: string; errorMessage?: string } };
+    if (e.type === "message_end" && e.message?.role === "assistant") last.assistant = e.message;
     if (e.type === "tool_execution_start") ops.onStart(String(e.toolCallId ?? ""), String(e.toolName ?? ""), e.args);
     else if (e.type === "tool_execution_end") {
       let r = "";
@@ -344,8 +257,11 @@ export async function startSession(ctx: SessionCtx, opts: {
             });
           }
           firstTry = false;
+          last.assistant = undefined;
           await sess.prompt(pending);
           await sess.waitForIdle();
+          const failed = modelError();
+          if (failed) throw new Error(`模型调用失败：${failed}`);
           // 任务终点 = 收尾条目（done 标之前那一叶）；起点 = 本任务链上最早的用户消息条目（fish 09-15）
           const endEntry = smP.getLeafId() ?? undefined;
           const startEntry = findTaskStart(smP, preLeaf, endEntry);
@@ -370,6 +286,8 @@ export async function startSession(ctx: SessionCtx, opts: {
             });
             return { aborted: true };
           }
+          const delays = ctx.retryDelaysMs ?? RETRY_DELAYS_MS;
+          await new Promise((resolve) => setTimeout(resolve, delays[Math.min(failures, delays.length) - 1] ?? 0));
           pending = "上一次执行因平台错误中断。请核对工作区现状，从未完成处继续。";
         }
       }
@@ -382,7 +300,7 @@ export async function startSession(ctx: SessionCtx, opts: {
     async summarizeTo(label: string, opts2: { summaryLabel: string; guide?: string }) {
       // 自研分支摘要（fish 09-11）；task summary 语义（fish 09-15）：闭区间含两端、挂到起处的前驱
       const { branchSummarize } = await import("./branch-summary.ts");
-      const r = await branchSummarize(sess as unknown as Parameters<typeof branchSummarize>[0], ctx.engineDir, label, opts2);
+      const r = await branchSummarize(sess as unknown as Parameters<typeof branchSummarize>[0], label, opts2);
       // 折叠台账（task summary = 唯一折叠操作）：覆盖区间 + 成员任务；coveredBy 派生
       ln({
         id, action: "fold", file: sessFile, kind: "task-summary", label, summaryEntry: r.summaryId, summaryLabel: opts2.summaryLabel,
@@ -474,13 +392,25 @@ export async function startSession(ctx: SessionCtx, opts: {
     setBinding(patch: Partial<ToolBinding>) { Object.assign(bindingRef, patch); },
 
     async setResolvedModel(model: unknown, thinking?: string) {
-      await (sess as unknown as { setModel: (m: unknown, o?: Record<string, unknown>) => Promise<void> }).setModel(model, {});
-      if (thinking) (sess as unknown as { setThinkingLevel: (l: string) => void }).setThinkingLevel(thinking);
+      const selected = model as NonNullable<CreateAgentSessionOptions["model"]>;
+      await sess.setModel(selected);
+      if (thinking) {
+        const parsed = parseModelSpec(`${selected.provider}/${selected.id}:${thinking}`);
+        sess.setThinkingLevel(parsed.thinking!);
+        assertModelSelection(sess, { provider: selected.provider, modelId: selected.id, thinking: parsed.thinking });
+      }
       const m = model as { provider?: string; id?: string };
       ln({ id, action: "set-model", model: `${m.provider ?? "?"}/${m.id ?? "?"}${thinking ? ":" + thinking : ""}` });
     },
 
     async setModel(spec: string) {
+      if (opts.modelAgentKey && ctx.modelRegistry) {
+        const selected = parseModelSpec(spec);
+        const snapshot = ctx.modelRegistry.snapshot(opts.modelAgentKey);
+        await ctx.modelRegistry.replaceAgentModel(opts.modelAgentKey, { ...snapshot, version: snapshot.version + 1,
+          selection: { providerId: selected.provider, modelId: selected.id, thinking: selected.thinking ?? snapshot.selection.thinking } });
+        return;
+      }
       const { model, parsed } = await resolveModel(ctx.engineDir, spec);
       await handle.setResolvedModel(model, parsed.thinking);
     },
@@ -525,3 +455,47 @@ export async function startSession(ctx: SessionCtx, opts: {
   ln({ id, action: "start", agent: opts.agent, resumed: !!opts.sessionFile, file: sessFile });
   return handle;
 }
+
+/**
+ * 从会话文件的标记处分叉出独立会话（forkFromLabel）。
+ * 每次调用都从磁盘重读当前文件——并行模式下 hunt 仍在追加会话，旧 handle 的内存状态看不到新标记（fish 09-21）。
+ * 分支点语义与 handle.fork 一致：定位标记 → 叶子上溯跳过 label → createBranchedSession → 显式落盘。
+ */
+export async function forkFromLabel(
+  ctx: SessionCtx,
+  sessionFile: string,
+  label: string,
+  newId: string,
+  o?: { agent?: string; binding?: ToolBinding; modelSpec?: string; modelAgentKey?: string },
+): Promise<SessionHandle> {
+  const sm = SessionManager.open(sessionFile);
+  const entries = sm.getEntries();
+  const entry = entries.find((e) => sm.getLabel(e.id) === label)
+    ?? entries.find((e) => (sm.getLabel(e.id) ?? "").startsWith(label));   // 前缀匹配（成分表标记）
+  if (!entry) throw new Error(`fork 失败：会话树上没有标记 "${label}"`);
+  const byId = new Map(entries.map((e) => [e.id, e as unknown as { id: string; type?: string; parentId?: string | null }]));
+  let forkLeaf: string = entry.id;
+  let g = 0;
+  while (g++ < 1000) {
+    const e = byId.get(forkLeaf);
+    if (!e || e.type !== "label") break;
+    forkLeaf = e.parentId ?? "";
+  }
+  if (!forkLeaf) throw new Error("fork 失败：叶子上溯未找到内容条目");
+  const path = sm.createBranchedSession(forkLeaf);
+  if (!path) throw new Error("fork 失败：createBranchedSession 未返回路径");
+  if (!existsSync(path)) (sm as unknown as { _rewriteFile?: () => void })._rewriteFile?.();
+  if (!existsSync(path)) throw new Error("fork 失败：分支文件未生成");
+  lineage(ctx.workdir, ctx.runId
+    ? { run: ctx.runId, id: newId, action: "fork", label, file: path }
+    : { id: newId, action: "fork", label, file: path });
+  return startSession(ctx, {
+    agent: o?.agent ?? "hyp-chain",
+    id: newId,
+    binding: o?.binding,
+    sessionFile: path,
+    modelSpec: o?.modelSpec,
+    modelAgentKey: o?.modelAgentKey,
+  });
+}
+

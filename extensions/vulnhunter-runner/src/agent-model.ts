@@ -1,32 +1,13 @@
-import { InMemoryCredentialStore } from "@earendil-works/pi-ai";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import { join } from "node:path";
+import { createModelRuntime, registerModelProvider, type ModelDefinition, type ProviderDefinition } from "./model-provider.ts";
 
-/** Models exposed by a provider in the engine-level, JSON-safe protocol. */
-export interface AgentModelDefinition {
+export type AgentModelDefinition = ModelDefinition;
+/** Platform record identity is distinct from the native Pi provider ID. */
+export interface AgentProviderDefinition extends Omit<ProviderDefinition, "id"> {
   id: string;
-  name?: string;
-  api?: string;
-  reasoning?: boolean;
-  input?: Array<"text" | "image">;
-  thinkingLevelMap?: Record<string, string | null>;
-  contextWindow?: number;
-  maxTokens?: number;
-  cost?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number };
-  promptCache?: Record<string, unknown>;
-  samplingParams?: Record<string, unknown>;
-  compat?: Record<string, unknown>;
-}
-
-/** Provider definition accepted by the engine control plane. */
-export interface AgentProviderDefinition {
-  id: string;
-  name?: string;
-  api: string;
-  baseUrl: string;
-  headers?: Record<string, string>;
-  authHeader?: boolean;
-  models: AgentModelDefinition[];
+  providerType: string;
 }
 
 export interface AgentCredentialDefinition {
@@ -35,7 +16,8 @@ export interface AgentCredentialDefinition {
   apiKey: string;
 }
 
-export type AgentThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+export const AGENT_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+export type AgentThinkingLevel = typeof AGENT_THINKING_LEVELS[number];
 
 export interface AgentModelSelection {
   providerId: string;
@@ -56,9 +38,26 @@ export interface AgentModelSnapshot {
   credentials?: AgentCredentialDefinition[];
 }
 
+/** SDK identity only; never compare a platform record UUID to Model.provider. */
+export interface SdkModelSelection {
+  provider: string;
+  modelId: string;
+  thinking?: AgentThinkingLevel;
+}
+
+export function assertModelSelection(
+  session: { model?: { provider: string; id: string }; thinkingLevel: string },
+  selection: SdkModelSelection,
+): void {
+  if (session.model?.provider !== selection.provider || session.model.id !== selection.modelId
+    || (selection.thinking !== undefined && session.thinkingLevel !== selection.thinking)) {
+    throw new Error("SDK 未采用所选模型和思考档");
+  }
+}
+
 export interface AgentModelHost {
   id: string;
-  setResolvedModel(model: unknown, thinking?: string): Promise<void>;
+  setResolvedModel(model: ResolvedAgentModel["model"], thinking?: AgentThinkingLevel): Promise<void>;
 }
 
 export interface AgentModelRuntimeOptions {
@@ -82,7 +81,11 @@ export interface ResolvedAgentModel {
   selection: AgentModelSelection;
 }
 
-const ZERO_COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+function validateThinking(model: ResolvedAgentModel["model"], thinking: AgentThinkingLevel | undefined): void {
+  if (thinking !== undefined && !getSupportedThinkingLevels(model).includes(thinking)) {
+    throw new Error(`模型 ${model.provider}/${model.id} 不支持思考档 ${thinking}`);
+  }
+}
 
 function cloneSnapshot(snapshot: AgentModelSnapshot): AgentModelSnapshot {
   return JSON.parse(JSON.stringify(snapshot)) as AgentModelSnapshot;
@@ -96,7 +99,7 @@ function assertSnapshotShape(snapshot: AgentModelSnapshot): void {
   if (!s || typeof s.providerId !== "string" || !s.providerId || typeof s.modelId !== "string" || !s.modelId) {
     throw new Error("模型配置缺少 selection.providerId/modelId");
   }
-  if (s.thinking !== undefined && !["off", "minimal", "low", "medium", "high", "xhigh", "max"].includes(s.thinking)) {
+  if (s.thinking !== undefined && !AGENT_THINKING_LEVELS.includes(s.thinking)) {
     throw new Error(`不支持的 thinking level：${s.thinking}`);
   }
   if (snapshot.source === "inline") {
@@ -106,6 +109,7 @@ function assertSnapshotShape(snapshot: AgentModelSnapshot): void {
     for (const p of snapshot.providers) {
       if (!p || typeof p.id !== "string" || !p.id || providerIds.has(p.id)) throw new Error("providers 含空 id 或重复 provider id");
       providerIds.add(p.id);
+      if (typeof p.providerType !== "string" || !p.providerType) throw new Error(`provider ${p.id} 缺少 providerType`);
       if (!Array.isArray(p.models) || p.models.length === 0) throw new Error(`provider ${p.id} 缺少 models`);
       const modelIds = new Set<string>();
       for (const model of p.models) {
@@ -126,31 +130,29 @@ function assertSnapshotShape(snapshot: AgentModelSnapshot): void {
   }
 }
 
-function toPiProviderDefinition(p: AgentProviderDefinition): Record<string, unknown> {
-  if (!p.id || !p.api || !p.baseUrl || !Array.isArray(p.models) || p.models.length === 0) {
-    throw new Error(`provider ${p.id || "(empty)"} 缺少 api/baseUrl/models`);
-  }
-  return {
-    name: p.name,
-    api: p.api,
-    baseUrl: p.baseUrl,
-    headers: p.headers,
-    authHeader: p.authHeader,
-    models: p.models.map((m) => ({
-      id: m.id,
-      name: m.name ?? m.id,
-      api: m.api,
-      reasoning: m.reasoning ?? false,
-      input: m.input ?? ["text"],
-      thinkingLevelMap: m.thinkingLevelMap,
-      contextWindow: m.contextWindow ?? 128000,
-      maxTokens: m.maxTokens ?? 16384,
-      cost: { ...ZERO_COST, ...(m.cost ?? {}) },
-      promptCache: m.promptCache,
-      samplingParams: m.samplingParams,
-      compat: m.compat,
-    })),
-  };
+function selectedProvider(snapshot: AgentModelSnapshot): AgentProviderDefinition {
+  const provider = snapshot.providers?.find((entry) => entry.id === snapshot.selection.providerId);
+  if (!provider) throw new Error(`provider 记录不存在：${snapshot.selection.providerId}`);
+  return provider;
+}
+
+function resolveSnapshot(runtime: ModelRuntime, snapshot: AgentModelSnapshot): ResolvedAgentModel {
+  const selection = snapshot.selection;
+  const provider = snapshot.source === "inline" ? selectedProvider(snapshot).providerType : selection.providerId;
+  const model = runtime.getModel(provider, selection.modelId);
+  if (!model) throw new Error(`模型不存在：${selection.providerId}/${selection.modelId}`);
+  validateThinking(model, selection.thinking);
+  return { runtime, model, selection: { ...selection } };
+}
+
+/** Materialize only the selected record. Other same-type records stay in the platform snapshot;
+ * each agent has its own native registry/store, so they never overwrite another agent's key. */
+async function configureInline(runtime: ModelRuntime, snapshot: AgentModelSnapshot): Promise<void> {
+  const { id, providerType, ...definition } = selectedProvider(snapshot);
+  const credential = snapshot.credentials?.find((entry) => entry.providerId === id);
+  if (!credential) throw new Error(`provider 未配置凭证：${id}`);
+  registerModelProvider(runtime, { ...definition, id: providerType });
+  await runtime.setRuntimeApiKey(providerType, credential.apiKey);
 }
 
 /** One runtime scope. The object identity is intentionally stable for sessions. */
@@ -158,8 +160,7 @@ export class AgentModelRuntime {
   readonly agentKey: string;
   readonly runtime: ModelRuntime;
   private snapshotValue: AgentModelSnapshot;
-  private registeredProviders = new Set<string>();
-  private runtimeCredentials = new Set<string>();
+  private inlineProviderId?: string;
   private hosts = new Map<AgentModelHost, true>();
   private updateTail: Promise<unknown> = Promise.resolve();
 
@@ -171,15 +172,13 @@ export class AgentModelRuntime {
 
   static async create(snapshot: AgentModelSnapshot, options: AgentModelRuntimeOptions): Promise<AgentModelRuntime> {
     assertSnapshotShape(snapshot);
-    const credentials = snapshot.source === "inline" ? new InMemoryCredentialStore() : undefined;
-    const runtime = await ModelRuntime.create({
-      ...(snapshot.source === "local"
-        ? { authPath: join(options.engineDir, "auth.json"), modelsPath: join(options.engineDir, "models.json") }
-        : { modelsPath: null, refreshOnCreate: false }),
-      ...(credentials ? { credentials } : {}),
-    });
+    const runtime = snapshot.source === "local"
+      ? await ModelRuntime.create({ authPath: join(options.engineDir, "auth.json"), modelsPath: join(options.engineDir, "models.json") })
+      : await createModelRuntime();
     const slot = new AgentModelRuntime(options.agentKey, runtime, snapshot);
     await slot.install(snapshot);
+    const { model } = slot.current();
+    if (!(await runtime.getAuth(model))) throw new Error(`provider 未配置凭证：${model.provider}`);
     return slot;
   }
 
@@ -188,10 +187,7 @@ export class AgentModelRuntime {
   }
 
   current(): ResolvedAgentModel {
-    const selection = this.snapshotValue.selection;
-    const model = this.runtime.getModel(selection.providerId, selection.modelId);
-    if (!model) throw new Error(`模型不存在：${selection.providerId}/${selection.modelId}`);
-    return { runtime: this.runtime, model, selection: { ...selection } };
+    return resolveSnapshot(this.runtime, this.snapshotValue);
   }
 
   register(host: AgentModelHost): () => void {
@@ -221,13 +217,7 @@ export class AgentModelRuntime {
     const oldResolved = this.current();
     try {
       await this.install(snapshot);
-      const model = this.runtime.getModel(snapshot.selection.providerId, snapshot.selection.modelId);
-      if (!model) throw new Error(`模型不存在：${snapshot.selection.providerId}/${snapshot.selection.modelId}`);
-      const resolved: ResolvedAgentModel = {
-        runtime: this.runtime,
-        model,
-        selection: { ...snapshot.selection },
-      };
+      const resolved = resolveSnapshot(this.runtime, snapshot);
       for (const host of this.hosts.keys()) await host.setResolvedModel(resolved.model, resolved.selection.thinking);
       this.snapshotValue = cloneSnapshot(snapshot);
       return resolved;
@@ -246,22 +236,9 @@ export class AgentModelRuntime {
   }
 
   private async buildCandidate(snapshot: AgentModelSnapshot): Promise<ModelRuntime> {
-    if (snapshot.source === "local") {
-      const model = this.runtime.getModel(snapshot.selection.providerId, snapshot.selection.modelId);
-      if (!model) throw new Error(`模型不存在：${snapshot.selection.providerId}/${snapshot.selection.modelId}`);
-      const auth = await this.runtime.getAuth(model);
-      if (!auth) throw new Error(`provider 未配置凭证：${snapshot.selection.providerId}`);
-      return this.runtime;
-    }
-    const credentials = new InMemoryCredentialStore();
-    const candidate = await ModelRuntime.create({ modelsPath: null, credentials, refreshOnCreate: false });
-    for (const p of snapshot.providers ?? []) candidate.registerProvider(p.id, toPiProviderDefinition(p) as never);
-    for (const c of snapshot.credentials ?? []) {
-      if (c.type !== "api_key" || !c.apiKey) throw new Error(`credential ${c.providerId} 无有效 apiKey`);
-      await candidate.setRuntimeApiKey(c.providerId, c.apiKey);
-    }
-    const model = candidate.getModel(snapshot.selection.providerId, snapshot.selection.modelId);
-    if (!model) throw new Error(`模型不存在：${snapshot.selection.providerId}/${snapshot.selection.modelId}`);
+    const candidate = snapshot.source === "local" ? this.runtime : await createModelRuntime();
+    if (snapshot.source === "inline") await configureInline(candidate, snapshot);
+    const { model } = resolveSnapshot(candidate, snapshot);
     if (!(await candidate.getAuth(model))) throw new Error(`provider 未配置凭证：${snapshot.selection.providerId}`);
     return candidate;
   }
@@ -269,18 +246,12 @@ export class AgentModelRuntime {
   /** Apply snapshot contents to the stable runtime object. */
   private async install(snapshot: AgentModelSnapshot): Promise<void> {
     if (snapshot.source === "local") return;
-    for (const providerId of this.registeredProviders) this.runtime.unregisterProvider(providerId);
-    this.registeredProviders.clear();
-    for (const providerId of this.runtimeCredentials) await this.runtime.removeRuntimeApiKey(providerId);
-    this.runtimeCredentials.clear();
-    for (const p of snapshot.providers ?? []) {
-      this.runtime.registerProvider(p.id, toPiProviderDefinition(p) as never);
-      this.registeredProviders.add(p.id);
+    if (this.inlineProviderId) {
+      this.runtime.unregisterProvider(this.inlineProviderId);
+      await this.runtime.removeRuntimeApiKey(this.inlineProviderId);
     }
-    for (const c of snapshot.credentials ?? []) {
-      await this.runtime.setRuntimeApiKey(c.providerId, c.apiKey);
-      this.runtimeCredentials.add(c.providerId);
-    }
+    this.inlineProviderId = selectedProvider(snapshot).providerType;
+    await configureInline(this.runtime, snapshot);
   }
 }
 
@@ -323,7 +294,9 @@ export function redactAgentSnapshot(snapshot: AgentModelSnapshot): AgentModelSna
   if (out.credentials) out.credentials = out.credentials.map((c) => ({ ...c, apiKey: "<redacted>" }));
   // Provider headers may contain Authorization/API keys even when credentials
   // are represented separately; never expose them through the status API.
-  if (out.providers) out.providers = out.providers.map((p) => ({ ...p, headers: undefined }));
+  if (out.providers) out.providers = out.providers.map((p) => ({
+    ...p, headers: undefined, models: p.models.map((model) => ({ ...model, headers: undefined })),
+  }));
   return out;
 }
 

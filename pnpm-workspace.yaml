@@ -1,0 +1,7 @@
+packages:
+  - 'extensions/vulnhunter-runner'
+  - 'extensions/vulnhunter-runner/node-ext/pi-web-access'
+allowBuilds:
+  esbuild: true
+  protobufjs: true
+  '@google/genai': false

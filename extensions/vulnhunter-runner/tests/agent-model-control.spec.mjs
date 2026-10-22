@@ -21,6 +21,7 @@ const model = (providerId, modelId, apiKey, version, thinking = "high") => ({
   selection: { providerId, modelId, thinking },
   providers: [{
     id: providerId,
+    providerType: `${providerId}-type`,
     name: providerId,
     api: "openai-completions",
     baseUrl: "http://127.0.0.1:1/v1",
@@ -59,9 +60,9 @@ await t("agent runtime：同一 runtime 热切、未预置模型可用、失败�
     const second = model("provider-b", "model-b", "secret-b", 2, "medium");
     await slot.replace(second);
     assert.equal(slot.runtime, stableRuntime, "session 捕获的 runtime identity 必须稳定");
-    assert.equal(slot.current().model.provider, "provider-b");
+    assert.equal(slot.current().model.provider, "provider-b-type");
     assert.equal(slot.current().model.id, "model-b");
-    assert.deepEqual(applied, [{ model: "provider-b/model-b", thinking: "medium" }]);
+    assert.deepEqual(applied, [{ model: "provider-b-type/model-b", thinking: "medium" }]);
     assert.equal((await slot.runtime.getAuth(slot.current().model)).auth.apiKey, "secret-b");
 
     await assert.rejects(() => slot.replace({ ...second, version: 3, selection: { ...second.selection, modelId: "missing" } }), /模型不存在/);
@@ -82,9 +83,9 @@ await t("session 接线：同一 agent runtime 注入会话并能热切当前模
       { cwd: target, engineDir, workdir, params: {}, modelRegistry: registry },
       { agent: "build", id: "runtime-session", modelAgentKey: "init", sessionManager: SessionManager.inMemory(target) },
     );
-    assert.equal(handle.currentModel(), "provider-a/model-a");
+    assert.equal(handle.currentModel(), "provider-a-type/model-a");
     await registry.replaceAgentModel("init", model("provider-b", "model-b", "secret-b", 2, "medium"));
-    assert.equal(handle.currentModel(), "provider-b/model-b");
+    assert.equal(handle.currentModel(), "provider-b-type/model-b");
   } finally {
     handle?.close();
     rmSync(target, { recursive: true, force: true });

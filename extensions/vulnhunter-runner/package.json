@@ -1,8 +1,28 @@
 {
-  "name": "vulnhunter-runner",
+  "name": "@vulnhunter/engine-runner",
+  "version": "0.1.0",
   "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/api.ts",
+    "./extension": "./index.ts",
+    "./workflow": "./src/runtime.ts",
+    "./package.json": "./package.json",
+    "./model-provider": "./src/model-provider.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "tsc --noEmit false --outDir .dist --rewriteRelativeImportExtensions",
+    "test": "pnpm build && node --test tests/*.spec.mjs"
+  },
   "dependencies": {
+    "@earendil-works/chord": "1.2.0",
+    "@earendil-works/pi-durable": "1.2.0",
     "yaml": "^2.9.0"
   },
-  "type": "module"
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "1.2.x",
+    "@earendil-works/pi-ai": "1.2.x",
+    "@earendil-works/pi-tui": "1.2.x"
+  }
 }

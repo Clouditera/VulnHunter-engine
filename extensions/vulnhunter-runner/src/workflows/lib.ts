@@ -11,6 +11,7 @@ import { buildPrompt, type SessionHandle, type SessionCtx } from "../session.ts"
 import { hypIds, readHyp } from "../tools/hyp.ts";
 import { readFinding } from "../tools/finding.ts";
 import { readSandboxState } from "../tools/sandbox.ts";
+import { isDynamic } from "../params.ts";
 
 export interface LibCtx extends SessionCtx {
   report(message: string): void;
@@ -21,7 +22,7 @@ export interface LibCtx extends SessionCtx {
 // ---------------------------------------------------------------------------
 
 export interface HypChainOpts {
-  /** 是否启动动态环节（dynamic-verify/ev-assess）；默认按 sandbox_cfg 有无 */
+  /** 是否启动动态环节（dynamic-verify/ev-assess）；默认按 isDynamic(params) */
   dynamic?: boolean;
   /** fork 点标记（默认 verify-start；轻量版传出生轮 huntN-done 前缀匹配） */
   forkPoint?: string;
@@ -45,7 +46,7 @@ function lockFork(): Promise<() => void> {
 }
 
 export async function runHypChain(ctx: LibCtx, hypId: string, opts: HypChainOpts): Promise<void> {
-  const dynamicMode = opts.dynamic ?? !!ctx.params.sandbox_cfg;
+  const dynamicMode = opts.dynamic ?? isDynamic(ctx.params);
   const bugId = hypId.replace(/^HYP-/, "BUG-");
 
   // 从出生轮末梢 fork 出该 HYP 的独立会话（继承 hunt 各轮摘要）

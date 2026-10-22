@@ -20,12 +20,6 @@ await t("分支摘要通过 refreshContext 刷新，而不是写 agent.state.mes
   const engineDir = temp();
   const oldFetch = globalThis.fetch;
   try {
-    writeFileSync(join(engineDir, "models.json"), JSON.stringify({
-      providers: {
-        summary: { baseUrl: "https://summary.example/v1", api: "openai-completions", apiKey: "summary-secret" },
-      },
-    }));
-
     const entries = [
       { id: "root", parentId: null, type: "message", message: { role: "user", content: "root" } },
       { id: "anchor", parentId: "root", type: "label", label: "hunt-start[init]" },
@@ -49,15 +43,18 @@ await t("分支摘要通过 refreshContext 刷新，而不是写 agent.state.mes
     const sess = {
       sessionManager: sm,
       model: { provider: "summary", id: "summary-model" },
+      thinkingLevel: "low",
+      modelRuntime: { completeSimple: async (model, context, options) => {
+        assert.strictEqual(model, sess.model);
+        assert.equal(options.reasoning, "low");
+        assert.equal(options.maxTokens, 32768);
+        assert.match(context.systemPrompt, /任务定义/);
+        return { content: [{ type: "text", text: "summary text" }], stopReason: "stop", usage: { totalTokens: 1 } };
+      } },
       agent: { state: { messages: stateMessages } },
       refreshContext: () => { refreshes++; },
     };
-    globalThis.fetch = async () => new Response(JSON.stringify({
-      choices: [{ message: { content: "summary text" } }],
-      usage: { totalTokens: 1 },
-    }), { status: 200, headers: { "content-type": "application/json" } });
-
-    const result = await branchSummarize(sess, engineDir, "hunt-start", { summaryLabel: "Σhunt1" });
+    const result = await branchSummarize(sess, "hunt-start", { summaryLabel: "Σhunt1" });
     assert.equal(result.summaryId, "summary-entry");
     assert.deepEqual(appendedLabel, ["summary-entry", "Σhunt1"]);
     assert.equal(refreshes, 1);

@@ -4,15 +4,14 @@
  * 等价于 pi tree 的 branch summary，但全链路自控：
  * - 条目收集：沿 parentId 从当前叶走到挂载点（不依赖 pi 内部函数）；
  * - 序列化：我们自己把条目流压成文本（thinking 截断、toolResult 截断、标记/前序摘要保留）；
- * - 模型调用：直连 provider（我们的 provider 全是 openai-completions 兼容），思考恒开启、
- *   maxTokens 我们自己定——pi 的 4096 硬编码与 thinking 丢失两个上游缺陷从此与我们无关；
+ * - 模型调用：同一会话的 SDK runtime、模型和思考档；摘要预算仍由这里指定，
+ *   不使用 Pi 内置摘要器的截取/预算规则，也不另读凭证文件或硬编码某一种协议；
  * - 落树：SessionManager.branchWithSummary（pi 公开 API）把摘要挂到起处的前驱并推进叶子，
  *   再打标、同步 agent 内存态（与 navigateTree 末尾同款）。task summary 语义（fish 09-15）：
  *   闭区间 [起, 止] 含两端——起 = 标记所指节点（任务开始处），止 = 当前叶（收尾）；整段原位替换。
  */
 
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import type { AgentSession } from "@earendil-works/pi-coding-agent";
 
 
 /** 摘要结构模板（fish 09-10）：start 任务定义 + 完成事实 + 核心论据结论，丢中间细节 */
@@ -32,8 +31,6 @@ interface SMLike {
   getLabel(id: string): string | undefined;
   branchWithSummary(targetId: string, summary: string, details?: unknown, fromHook?: boolean, usage?: unknown): string;
   appendLabelChange(entryId: string, label: string): void;
-  /** Refresh AgentSession's inspection cache from the canonical SessionManager context. */
-  refreshContext(): void;
 }
 
 /** 从叶子沿 parentId 走到 stopId，收集区间内的条目（含叶子与起处本体，不含挂载点本身） */
@@ -95,47 +92,10 @@ export function serializeEntries(entries: Array<Record<string, unknown>>): strin
   return lines.join("\n\n");
 }
 
-interface ProviderConn { baseUrl: string; apiKey: string; modelId: string }
-
-/** 从引擎 models.json 解析 provider 连接信息（我们的 provider 全是 openai-completions 兼容）。
- *  key 解析链（V2 阻断件修复，Leo 09-17）：models.json 内联 → `$VAR` env → `auth.json[provider].key`。
- *  容器设计「key 不进 env」：跑批的 models.json 写 `$VH_KEY_*` 引用而 env 不设值，真 key 在 /agent/auth.json
- *  （pi 正常调用同源）；只试 env 会必抛「环境变量未设置」，compress 与 hunt 轮末摘要秒败。
- *  全链失败时报错列明尝试来源，查无可查的问题不再复现。 */
-export function resolveProvider(engineDir: string, provider: string, modelId: string): ProviderConn {
-  const mj = JSON.parse(readFileSync(join(engineDir, "models.json"), "utf-8"));
-  const p = mj.providers?.[provider];
-  if (!p) throw new Error(`models.json 里找不到 provider ${provider}`);
-  const attempted: string[] = [];
-  const keyRef = String(p.apiKey ?? "");
-  let apiKey = "";
-  if (keyRef && !keyRef.startsWith("$")) {
-    apiKey = keyRef; // ① models.json 内联
-  } else if (keyRef.startsWith("$")) {
-    const envName = keyRef.slice(1);
-    apiKey = process.env[envName] ?? ""; // ② `$VAR` env
-    if (!apiKey) attempted.push(`env ${envName} 未设置`);
-  } else {
-    attempted.push("models.json apiKey 为空");
-  }
-  if (!apiKey) {
-    try {
-      const auth = JSON.parse(readFileSync(join(engineDir, "auth.json"), "utf-8")) as Record<string, { key?: string } | undefined>;
-      apiKey = auth?.[provider]?.key ?? ""; // ③ auth.json[provider].key（与 pi 调用同源）
-      if (!apiKey) attempted.push(`auth.json[${provider}] 无 key`);
-    } catch {
-      attempted.push(`auth.json[${provider}] 不可读`);
-    }
-  }
-  if (!apiKey) throw new Error(`provider ${provider} 的 key 解析失败；已尝试：${attempted.join("；")}`);
-  return { baseUrl: p.baseUrl, apiKey, modelId };
-}
-
 /** 主入口：task summary——从当前叶摘要回「起处」（targetLabel 所指节点），闭区间含两端，
  *  摘要挂到起处的前驱并推进叶子（fish 09-15 定稿） */
 export async function branchSummarize(
-  sess: { sessionManager: SMLike; model?: { provider: string; id: string } },
-  engineDir: string,
+  sess: Pick<AgentSession, "model" | "modelRuntime" | "thinkingLevel" | "refreshContext"> & { sessionManager: SMLike },
   targetLabel: string,
   opts: { summaryLabel: string; guide?: string },
 ): Promise<{ summaryId: string; usage: unknown; targetId: string; attachId: string; fromId?: string; coveredIds: string[] }> {
@@ -156,33 +116,24 @@ export async function branchSummarize(
   const text = serializeEntries(slice);
   const model = sess.model;
   if (!model) throw new Error("分支摘要失败：会话无模型");
-  const conn = resolveProvider(engineDir, model.provider, model.id);
 
   const user = (opts.guide ? `相关性过滤：${opts.guide}\n\n---\n\n` : "") + `以下是要摘要的会话历史（${slice.length} 个条目）：\n\n${text}`;
-  const res = await fetch(`${conn.baseUrl}/chat/completions`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${conn.apiKey}` },
-    body: JSON.stringify({
-      model: conn.modelId,
-      messages: [
-        { role: "system", content: SUMMARY_SYSTEM },
-        { role: "user", content: user },
-      ],
-      max_tokens: 32768,
-      thinking: { type: "enabled", clear_thinking: false },
-      stream: false,
-    }),
+  const response = await sess.modelRuntime.completeSimple(model, {
+    systemPrompt: SUMMARY_SYSTEM,
+    messages: [{ role: "user", content: user, timestamp: Date.now() }],
+  }, {
+    maxTokens: 32768,
+    ...(sess.thinkingLevel !== "off" ? { reasoning: sess.thinkingLevel } : {}),
     signal: AbortSignal.timeout(600_000),
   });
-  if (!res.ok) throw new Error(`分支摘要模型调用失败：HTTP ${res.status} ${(await res.text()).slice(0, 200)}`);
-  const j = (await res.json()) as { choices?: Array<{ message?: { content?: string } }>; usage?: unknown };
-  const summary = j.choices?.[0]?.message?.content?.trim();
+  if (response.stopReason === "error" || response.stopReason === "aborted") throw new Error(`分支摘要模型调用失败：${response.errorMessage ?? response.stopReason}`);
+  const summary = response.content.filter((part) => part.type === "text").map((part) => part.text).join("\n").trim();
   if (!summary) throw new Error("分支摘要模型调用返回空内容");
 
-  const summaryId = sm.branchWithSummary(attachId, summary, { guide: opts.guide?.slice(0, 300) }, true, j.usage);
+  const summaryId = sm.branchWithSummary(attachId, summary, { guide: opts.guide?.slice(0, 300) }, true, response.usage);
   if (opts.summaryLabel) sm.appendLabelChange(summaryId, opts.summaryLabel);
   // 0.87 起 SessionManager 是 provider context 的唯一事实源；不要直接写 agent.state.messages。
   // refreshContext() 只刷新 AgentSession 的只读/检查缓存，下一次请求仍从 SessionManager 构建上下文。
-  (sess as unknown as { refreshContext?: () => void }).refreshContext?.();
-  return { summaryId, usage: j.usage, targetId: target.id, attachId, fromId, coveredIds: slice.map((e) => String(e.id)) };
+  sess.refreshContext();
+  return { summaryId, usage: response.usage, targetId: target.id, attachId, fromId, coveredIds: slice.map((e) => String(e.id)) };
 }

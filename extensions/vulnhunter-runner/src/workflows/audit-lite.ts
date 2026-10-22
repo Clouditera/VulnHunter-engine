@@ -13,12 +13,13 @@
  * 标记语法：docs/session-marks.md（<任务>-start[成分] / <任务>-done[成分][+产出]，Σ=已摘要）。
  *
  * 参数（ctx.params）：rounds / chain_filter / chain_concurrency / hunt_coverage_threshold / hunt_zero_rounds /
- * hunt_mode（fresh=每轮从 init 重开）/ coverage_include / coverage_exclude / sandbox_cfg / skip_ev / model_concurrency /
+ * hunt_mode（fresh=每轮从 init 重开）/ coverage_include / coverage_exclude / mode（dynamic=含沙箱复现）/ sandbox_cfg（独立使用：自备沙箱的 ssh）/ skip_ev / model_concurrency /
  * 模型：model（全局）/ model_init / model_hunt / model_verify（按池），语法 provider/model[:thinking]（见 model-config.ts）。
  */
 
 import { defineStagedWorkflow, runStages, type StageCtx, type StageDef, type WorkflowContext } from "../runtime.ts";
 import { createExecutor } from "../executor/index.ts";
+import { isDynamic } from "../params.ts";
 import { createWakeQueue, electVerifyCandidates, runHypChain, runVerifyConsumer } from "./lib.ts";
 import { buildPrompt, forkFromLabel, type SessionHandle } from "../session.ts";
 import { monitorState } from "../monitor-state.ts";
@@ -37,14 +38,23 @@ const liteWorkflow = defineStagedWorkflow({
 
   // 观察台自报有效配置（09-14 designer）：默认值在此解析，前端不猜
   configView(ctx) {
-    let model = "（会话默认）";
-    try {
-      const s = JSON.parse(readFileSync(join(ctx.engineDir, "settings.json"), "utf-8"));
-      if (s.defaultProvider && s.defaultModel) model = `${s.defaultProvider}/${s.defaultModel}`;
-    } catch { /* 无碍 */ }
-    // 按池模型（fish 09-21）：model=汇总视图；model_* = 各池生效值（文件已含启动参数，stages() 先于本视图执行）
-    const mcfg = readModelConfig(ctx.workdir);
-    const modelOf = (p: "init" | "hunt" | "verify"): string => effectiveModelSpec(mcfg, p) ?? model;
+    const labels: Record<"init" | "hunt" | "verify", string> = { init: "", hunt: "", verify: "" };
+    if (ctx.modelRegistry) {
+      for (const pool of ["init", "hunt", "verify"] as const) {
+        const selected = ctx.modelRegistry.snapshot(pool).selection;
+        labels[pool] = `${selected.providerId}/${selected.modelId}${selected.thinking ? `:${selected.thinking}` : ""}`;
+      }
+    } else {
+      // Standalone CLI owns its local source. Platform composition always supplies all three memory scopes.
+      let model = "（本地 SDK 默认）";
+      try {
+        const settings = JSON.parse(readFileSync(join(ctx.engineDir, "settings.json"), "utf-8"));
+        if (settings.defaultProvider && settings.defaultModel) model = `${settings.defaultProvider}/${settings.defaultModel}`;
+      } catch { /* No local default was configured. */ }
+      const choices = readModelConfig(ctx.workdir);
+      for (const pool of ["init", "hunt", "verify"] as const) labels[pool] = effectiveModelSpec(choices, pool) ?? model;
+    }
+    const modelOf = (pool: "init" | "hunt" | "verify") => labels[pool];
     const allSame = modelOf("init") === modelOf("hunt") && modelOf("hunt") === modelOf("verify");
     return {
       model: allSame ? modelOf("init") : `init=${modelOf("init")} · hunt=${modelOf("hunt")} · verify=${modelOf("verify")}`,
@@ -59,7 +69,7 @@ const liteWorkflow = defineStagedWorkflow({
       chain_filter: ctx.params.chain_filter ?? "全部",
       chain_concurrency: ctx.params.chain_concurrency ?? "3",
       model_concurrency: ctx.params.model_concurrency ?? "3（模型容量许可）",
-      sandbox: ctx.params.sandbox_cfg ?? "（无，纯静态）",
+      sandbox: isDynamic(ctx.params) ? (ctx.params.sandbox_cfg ?? "（执行环境即沙箱）") : "（无，纯静态）",
       coverage_include: ctx.params.coverage_include ?? ".",
       coverage_exclude: ctx.params.coverage_exclude ?? "（无）",
     };
@@ -74,7 +84,7 @@ const liteWorkflow = defineStagedWorkflow({
     const exec = createExecutor();
     const modelPermits = Math.max(1, Number(ctx.params.model_concurrency || "3"));
     exec.bindCapacity("model", { permits: modelPermits });
-    exec.bindCapacity("sandbox", { permits: ctx.params.sandbox_cfg ? 1 : 0 });
+    exec.bindCapacity("sandbox", { permits: isDynamic(ctx.params) ? 1 : 0 });
     const initPool = exec.declarePool("init", { concurrency: 1, locked: true, priority: 40, needs: ["model"] });
     const huntPool = exec.declarePool("hunt", { concurrency: 1, locked: true, priority: 30, needs: ["model"] });
     const verifyPool = exec.declarePool("verify", { concurrency: chainConc, priority: 10, needs: ["model"] });
@@ -86,15 +96,15 @@ const liteWorkflow = defineStagedWorkflow({
     const wakeups = createWakeQueue();   // hunt ∥ verify 事件唤醒（task.end / 轮末 / 收尾；fish 09-21）
 
     // ---- 模型配置（fish 09-21）：按池分配（init/hunt/verify）+ 运行中热切换 ----
-    seedModelConfigFromParams(ctx.workdir, ctx.params);   // 启动参数并入单源文件（只写显式给出的项）
+    if (!ctx.modelRegistry) seedModelConfigFromParams(ctx.workdir, ctx.params);   // 启动参数并入单源文件（只写显式给出的项）
     const modelSpecFor = (pool: "init" | "hunt" | "verify"): string | undefined => effectiveModelSpec(readModelConfig(ctx.workdir), pool);
     const modelSwitch = createLiveModelSwitch({ read: () => readModelConfig(ctx.workdir), report: (m) => ctx.report(m) });
-    const modelWatch = createModelFileWatch({ workdir: ctx.workdir, onChanged: () => modelSwitch.apply() });
+    const modelWatch = ctx.modelRegistry ? undefined : createModelFileWatch({ workdir: ctx.workdir, onChanged: () => modelSwitch.apply() });
     const registerLive = (h: SessionHandle, pool: () => "init" | "hunt" | "verify", applied: string | undefined): (() => void) => modelSwitch.register(h, pool, applied);
-    const ensureModelWatch = (): (() => void) => modelWatch.acquire();
+    const ensureModelWatch = (): (() => void) => modelWatch?.acquire() ?? (() => undefined);
     // 阶段复用：local/file 模式走旧监听；inline/纯引擎 registry 模式把稳定 runtime 传进 session。
     const pooledOpen = async (s: import("../runtime.ts").StageCtx, pool: "init" | "hunt", tag: string, o?: { fresh?: boolean }) => {
-      const registryMode = !!s.modelRegistry?.has(pool);
+      const registryMode = !!s.modelRegistry;
       const unwatch = registryMode ? () => undefined : ensureModelWatch();
       try {
         const spec = registryMode ? undefined : modelSpecFor(pool);
@@ -239,7 +249,7 @@ const liteWorkflow = defineStagedWorkflow({
     // ---- verify 消费（system/hyp 状态驱动；与 hunt 并行、事件驱动——fish 09-21「下游消费优先」）----
     out.push({ name: "chains", parallelGroup: "audit-loop", run: async (s) => {
       const sessionFile = (s.state.sessions as Record<string, string>).init;
-      const registryMode = !!s.modelRegistry?.has("verify");
+      const registryMode = !!s.modelRegistry;
       const unwatch = registryMode ? () => undefined : ensureModelWatch();   // registry 模式由稳定 runtime 负责热切换；legacy 模式延续文件监听
       // 上游落定：hunt 不在本 run / 已收尾（huntSettled）/ 状态已是 done|failed
       const settled = (): boolean =>
@@ -248,7 +258,7 @@ const liteWorkflow = defineStagedWorkflow({
         || s.state.stages.hunt === "done"
         || s.state.stages.hunt === "failed";
       // 动态门槛可见性（fail-closed 收口）：沙箱状态未知时明确告警，不静默（09-17 ev 静默缺陷教训）
-      if (ctx.params.sandbox_cfg && readSandboxState(ctx.workdir).status === "unknown") {
+      if (isDynamic(ctx.params) && readSandboxState(ctx.workdir).status === "unknown") {
         ctx.report("⚠ 沙箱状态未知（unknown）——动态链将自行探测并回报 sandbox；请确认 build 阶段已执行 sandbox report");
       }
       const unsub = exec.on((e) => { if (e.type === "task.end") wakeups.push(); });   // 释放槽位 → 唤醒

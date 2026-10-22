@@ -91,9 +91,10 @@ export function createMonitorComponent(tui: TUI, theme: Theme, workdir: string, 
 
   function renderCoverage(width: number): string[] {
     // 数据走 coverage 扩展的产物（快照 JSON）——09-20 解耦，不再直接读 coverage 内部
-    let sm: { coverage?: number; read_lines?: number; total_lines?: number; covered_files?: number; files?: number } | null = null;
+    type Summary = { coverage?: number; read_lines?: number; total_lines?: number; covered_files?: number; files?: number };
+    let sm: Summary | null = null;
     try {
-      sm = (JSON.parse(readFileSync(join(workdir, "system", "coverage", "code-reading-coverage.json"), "utf-8")) as { summary?: typeof sm }).summary ?? null;
+      sm = (JSON.parse(readFileSync(join(workdir, "system", "coverage", "code-reading-coverage.json"), "utf-8")) as { summary?: Summary }).summary ?? null;
     } catch { sm = null; }
     if (!sm || !sm.total_lines) return ["（暂无覆盖率快照）"];
     const pct = (sm.coverage ?? 0) * 100;
